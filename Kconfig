@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+
+menu "ZMK Long-Press Wake"
+
+config ZMK_LONG_PRESS_WAKE
+bool "ZMK long-press wake and external power control"
+default y
+help
+  Enable long-press wake filtering from SOFT-OFF along with optional external
+  power gating controlled via devicetree.
+
+if ZMK_LONG_PRESS_WAKE
+
+module = zmk_long_press_wake
+module-str = "ZMK Long-Press Wake"
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # ZMK_LONG_PRESS_WAKE
+
+endmenu
