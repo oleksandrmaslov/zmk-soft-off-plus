@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: MIT
+%YAML 1.2
+---
+title: ZMK Long-Press Wake Controller
+
+maintainers:
+  - name: ZMK Contributors
+
+compatible: "zmk,long-press-wake"
+
+include: base.yaml
+
+properties:
+  wake-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      GPIOs monitored as long-press wake inputs. These pins should also be
+      configured as hardware wakeup sources in the SoC or board devicetree.
+
+  required-hold-ms:
+    type: int
+    default: 3000
+    description: Minimum duration in milliseconds that a wake input must remain active.
+
+  bypass-on-usb:
+    type: boolean
+    description: Skip long-press enforcement when USB power is present.
+
+  active-low:
+    type: boolean
+    description: Wake GPIOs are active when driven low. If absent, GPIOs are active high.
+
+  ext-power-gpios:
+    type: phandle-array
+    description: Optional GPIOs controlling external power rails or peripherals.
+
+  ext-power-on-delay-ms:
+    type: int
+    default: 0
+    description: Delay in milliseconds before enabling external power after a valid wake.
+...
