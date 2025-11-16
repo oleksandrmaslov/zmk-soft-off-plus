@@ -6,8 +6,10 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/pm/pm.h>
+#include <zephyr/init.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/pm/state.h>
 
 #ifndef CONFIG_ZMK_LONG_PRESS_WAKE_LOG_LEVEL
 #define CONFIG_ZMK_LONG_PRESS_WAKE_LOG_LEVEL LOG_LEVEL_INF
