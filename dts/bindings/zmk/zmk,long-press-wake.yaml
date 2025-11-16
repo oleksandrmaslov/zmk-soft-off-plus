@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 %YAML 1.2
 ---
-title: ZMK Long-Press Wake Controller
-
 description: |
   This binding describes a controller that monitors one or more GPIO inputs for long-press events
   to wake the system from a soft-off state. It optionally controls external power rails and
