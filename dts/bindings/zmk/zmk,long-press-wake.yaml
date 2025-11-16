@@ -6,12 +6,7 @@ description: |
   to wake the system from a soft-off state. It optionally controls external power rails and
   bypasses long-press enforcement when USB is present.
 
-maintainers:
-  - name: ZMK Contributors
-
 compatible: "zmk,long-press-wake"
-
-include: base.yaml
 
 properties:
   wake-gpios:
