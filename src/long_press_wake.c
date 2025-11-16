@@ -9,6 +9,10 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 
+#ifndef CONFIG_ZMK_LONG_PRESS_WAKE_LOG_LEVEL
+#define CONFIG_ZMK_LONG_PRESS_WAKE_LOG_LEVEL LOG_LEVEL_INF
+#endif
+
 LOG_MODULE_REGISTER(zmk_long_press_wake, CONFIG_ZMK_LONG_PRESS_WAKE_LOG_LEVEL);
 
 #define LPW_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(zmk_long_press_wake)
