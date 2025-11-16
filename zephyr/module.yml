@@ -3,8 +3,6 @@
 name: zmk-soft-off-wake-delay
 
 build:
-  depends:
-    - zmk
   cmake: .
   kconfig: Kconfig
   settings:
