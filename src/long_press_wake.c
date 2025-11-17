@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: MIT
 #include <stdbool.h>
-#include <stdint.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/init.h>
 #include <zephyr/pm/pm.h>
-#include <zephyr/pm/state.h>
+#include <zephyr/init.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
-#if defined(CONFIG_USB_DEVICE_STACK)
-#include <zephyr/usb/usb_device.h>
-#endif
+#include <zephyr/pm/state.h>
 
 #ifndef CONFIG_ZMK_LONG_PRESS_WAKE_LOG_LEVEL
 #define CONFIG_ZMK_LONG_PRESS_WAKE_LOG_LEVEL LOG_LEVEL_INF
@@ -75,34 +72,10 @@ static const struct gpio_dt_spec ext_power_gpios[] = {
 
 #endif /* DT_NODE_HAS_STATUS(LPW_NODE, okay) */
 
-static void zmk_long_press_wake_delay_ms(uint32_t duration_ms)
-{
-    if (duration_ms == 0U) {
-        return;
-    }
-
-    uint64_t remaining_us = (uint64_t)duration_ms * USEC_PER_MSEC;
-
-    while (remaining_us > 0U) {
-        uint32_t step = (remaining_us > UINT32_MAX) ? UINT32_MAX : (uint32_t)remaining_us;
-
-        k_busy_wait(step);
-        remaining_us -= step;
-    }
-}
-
 static bool zmk_long_press_wake_usb_present(void)
 {
 #if LPW_BYPASS_ON_USB && defined(CONFIG_USB_DEVICE_STACK)
-    bool vbus_present = false;
-    int ret = usb_dc_vbus_get_status(&vbus_present);
-
-    if (ret < 0) {
-        LOG_WRN("Unable to query USB VBUS status (%d); assuming not present", ret);
-        return false;
-    }
-
-    return vbus_present;
+    return true;
 #else
     return false;
 #endif
@@ -143,7 +116,7 @@ static void zmk_long_press_wake_configure_ext_power(void)
 static void zmk_long_press_wake_enable_ext_power(void)
 {
     if (LPW_EXT_POWER_ON_DELAY_MS > 0) {
-        zmk_long_press_wake_delay_ms((uint32_t)LPW_EXT_POWER_ON_DELAY_MS);
+        k_msleep(LPW_EXT_POWER_ON_DELAY_MS);
     }
 
     zmk_long_press_wake_set_ext_power(true);
@@ -297,7 +270,7 @@ static int zmk_long_press_wake_init(void)
         uint32_t remaining = LPW_REQUIRED_HOLD_MS - elapsed;
         uint32_t wait_ms = MIN(remaining, 10U);
 
-        zmk_long_press_wake_delay_ms(wait_ms);
+        k_msleep(wait_ms);
         elapsed += wait_ms;
 
         bool any_still_active = false;
