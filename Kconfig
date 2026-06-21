@@ -55,6 +55,15 @@ config ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS
 	  Time to wait after sending the cross-half off signal before this half
 	  powers off, so the BLE write/notification is transmitted first.
 
+config ZMK_SOFT_OFF_PLUS_IF_USB
+	bool "USB-conditional behavior wrapper (zmk,behavior-if-usb)"
+	default y if DT_HAS_ZMK_BEHAVIOR_IF_USB_ENABLED
+	help
+	  Compile the zmk,behavior-if-usb behavior, which forwards to a child
+	  behavior only while USB is connected on the half that runs it. Handy to
+	  gate &bootloader behind a deliberate, USB-only power-key gesture so DFU can
+	  only be entered on the half that is actually plugged in.
+
 module = ZMK_SOFT_OFF_PLUS
 module-str = "ZMK Soft Off Plus"
 source "subsys/logging/Kconfig.template.log_config"

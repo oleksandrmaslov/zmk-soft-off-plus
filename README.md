@@ -92,6 +92,39 @@ add a `zmk,soft-off-plus-wake` node on the same pin, and keep the existing
 `zmk,soft-off-wakeup-sources`. Pressing/holding the key on either half now turns
 both off; holding it ~3s turns the board back on.
 
+## USB-gated bootloader on the power key — `zmk,behavior-if-usb`
+
+`zmk,behavior-if-usb` forwards to a child behavior only while USB is connected on
+the half that runs it. Combined with `zmk,behavior-tap-dance` it lets one power
+key do several things, while keeping a destructive action like `&bootloader`
+behind a deliberate, USB-only gesture — so DFU can only be entered on the half
+that is actually plugged in, and not by accident on battery:
+
+```dts
+/ {
+    behaviors {
+        if_usb_bootloader: if_usb_bootloader {
+            compatible = "zmk,behavior-if-usb";
+            #binding-cells = <0>;
+            bindings = <&bootloader>;   /* only while USB is powered */
+        };
+
+        power_btn_combo: power_btn_combo {
+            compatible = "zmk,behavior-tap-dance";
+            #binding-cells = <0>;
+            tapping-term-ms = <300>;
+            /* hold -> soft off (both halves); 2 taps -> nothing;
+             * 3 taps -> bootloader, only on the USB-connected half */
+            bindings = <&hw_soft_off>, <&none>, <&if_usb_bootloader>;
+        };
+    };
+};
+```
+
+`bindings` takes the behavior to run while USB is powered (first entry). If USB
+is not connected the press is swallowed. `&bootloader` resolves from ZMK's
+`behaviors.dtsi` (already included by keymaps).
+
 ## Example: keymap soft off + any-key wake (e.g. corne)
 
 No dedicated key. Bind `&soft_off_plus` in the keymap, make the matrix kscan the
