@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+%YAML 1.2
+---
+description: |
+  Forwards to a child behavior only while USB is connected/powered; otherwise
+  does nothing. Each half evaluates its own USB state. Useful to gate a
+  destructive action such as &bootloader so it only fires on the half that is
+  plugged in.
+
+compatible: "zmk,behavior-if-usb"
+
+include: zero_param.yaml
+
+properties:
+  bindings:
+    type: phandle-array
+    required: true
+    description: Behavior invoked (press and release forwarded) while USB is powered. The first entry is used.
+...

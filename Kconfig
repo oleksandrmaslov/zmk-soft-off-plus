@@ -3,57 +3,77 @@
 menu "ZMK Soft Off Plus"
 
 config ZMK_SOFT_OFF_PLUS
-	bool "ZMK soft-off-plus (wake delay + split simultaneous off)"
+	bool "ZMK soft-off-plus"
 	depends on ZMK_PM_SOFT_OFF
-	default y if DT_HAS_ZMK_BEHAVIOR_SOFT_OFF_PLUS_ENABLED || DT_HAS_ZMK_SOFT_OFF_PLUS_WAKE_ENABLED
+	default y if DT_HAS_ZMK_BEHAVIOR_SOFT_OFF_PLUS_ENABLED || DT_HAS_ZMK_SOFT_OFF_PLUS_WAKE_ENABLED || DT_HAS_ZMK_BEHAVIOR_IF_USB_ENABLED
 	help
-	  Umbrella switch for the soft-off-plus module. It provides an enhanced
-	  soft-off behavior that can power off both halves of a split keyboard
-	  together over BLE, plus a boot-time "hold to wake" delay so a brief press
-	  of the power key does not turn the board on.
-
-	  Requires ZMK soft off (CONFIG_ZMK_PM_SOFT_OFF).
+	  Umbrella switch for the soft-off-plus module. Each feature below has its
+	  own option and also auto-enables when its devicetree node is present, so
+	  normally you only add the nodes you want. Requires ZMK soft off
+	  (CONFIG_ZMK_PM_SOFT_OFF).
 
 if ZMK_SOFT_OFF_PLUS
 
-config ZMK_SOFT_OFF_PLUS_WAKE_DELAY
-	bool "Require a long press to wake from soft off"
-	default y if DT_HAS_ZMK_SOFT_OFF_PLUS_WAKE_ENABLED
-	select HWINFO
-	select POWEROFF
+#
+# Feature 1: enhanced soft-off behavior (+ optional split "both halves off")
+#
+config ZMK_SOFT_OFF_PLUS_BEHAVIOR
+	bool "Enhanced soft-off behavior (zmk,behavior-soft-off-plus)"
+	default y if DT_HAS_ZMK_BEHAVIOR_SOFT_OFF_PLUS_ENABLED
 	help
-	  When the board wakes from soft off (a System OFF reset on nRF), poll the
-	  configured wake GPIO(s) and only continue booting if they stay active for
-	  at least "wake-hold-ms". Otherwise immediately re-arm the wake source and
-	  return to System OFF without powering up the radio or display. Configure
-	  with a "zmk,soft-off-plus-wake" devicetree node.
-
-config ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY
-	int "Wake-delay boot check init priority (POST_KERNEL)"
-	depends on ZMK_SOFT_OFF_PLUS_WAKE_DELAY
-	default 50
-	help
-	  POST_KERNEL init priority for the boot-time hold check. It runs before the
-	  display panel (POST_KERNEL 85) and BLE (APPLICATION 50), and blocks while
-	  polling, so a spurious wake returns to System OFF before those rails are
-	  brought up. Lower runs earlier.
+	  Compile the &soft_off_plus behavior. It times its hold on whichever half
+	  runs it; bind it from a keymap or a dedicated power/soft-off key.
 
 config ZMK_SOFT_OFF_PLUS_SPLIT_SYNC
 	bool "Power off both split halves together"
-	depends on ZMK_SPLIT && BT
+	depends on ZMK_SOFT_OFF_PLUS_BEHAVIOR && ZMK_SPLIT && BT
 	default y if ZMK_SPLIT
 	help
-	  Use a dedicated GATT characteristic so that triggering soft-off-plus on
-	  either half powers off both halves. The central writes an off command to
-	  its peripheral(s); a peripheral notifies the central.
+	  Triggering soft-off-plus on either half powers off both, via a dedicated
+	  GATT characteristic (the central writes an off command to its
+	  peripheral(s); a peripheral notifies the central).
 
 config ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS
 	int "BLE off-signal flush delay (ms)"
 	depends on ZMK_SOFT_OFF_PLUS_SPLIT_SYNC
 	default 60
 	help
-	  Time to wait after sending the cross-half off signal before this half
-	  powers off, so the BLE write/notification is transmitted first.
+	  Wait this long after sending the cross-half off signal before powering
+	  off, so the BLE write/notification is transmitted first.
+
+#
+# Feature 2: boot-time "hold to wake" delay
+#
+config ZMK_SOFT_OFF_PLUS_WAKE_DELAY
+	bool "Require a long press to wake from soft off"
+	default y if DT_HAS_ZMK_SOFT_OFF_PLUS_WAKE_ENABLED
+	select HWINFO
+	select POWEROFF
+	help
+	  After waking from soft off (a System OFF reset on nRF), poll the wake
+	  GPIO(s) and only continue booting if they stay active for wake-hold-ms;
+	  otherwise re-arm the wake source and return to System OFF immediately.
+	  Configure with a zmk,soft-off-plus-wake devicetree node.
+
+config ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY
+	int "Wake-delay boot check init priority (POST_KERNEL)"
+	depends on ZMK_SOFT_OFF_PLUS_WAKE_DELAY
+	default 50
+	help
+	  POST_KERNEL priority of the boot-time hold check. It must run before the
+	  kscan that owns the wake pins; for a matrix wake key set this low (e.g. 1).
+
+#
+# Feature 3: USB-conditional wrapper (e.g. bootloader on the power key)
+#
+config ZMK_SOFT_OFF_PLUS_IF_USB
+	bool "USB-conditional wrapper behavior (zmk,behavior-if-usb)"
+	default y if DT_HAS_ZMK_BEHAVIOR_IF_USB_ENABLED
+	help
+	  Compile zmk,behavior-if-usb, which forwards to a child behavior only while
+	  USB is powered on the half that runs it. Use it on a dedicated
+	  power/soft-off key to gate &bootloader so DFU is only reachable on the
+	  half that is plugged in.
 
 module = ZMK_SOFT_OFF_PLUS
 module-str = "ZMK Soft Off Plus"
