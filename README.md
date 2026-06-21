@@ -83,7 +83,7 @@ The hold-to-wake check runs only when the reset was a wake from System OFF, so a
 normal boot, USB plug, or reset button is unaffected. On a non-confirmed wake it
 re-arms the wake input sense and calls `sys_poweroff()` immediately.
 
-## Example: dedicated power key per half (e.g. wafer)
+## Example: dedicated power key per half 
 
 Each half already has a dedicated GPIO power key fed through
 `zmk,kscan-sideband-behaviors`. Point the sideband binding at `&soft_off_plus`
@@ -92,7 +92,7 @@ add a `zmk,soft-off-plus-wake` node on the same pin, and keep the existing
 `zmk,soft-off-wakeup-sources`. Pressing/holding the key on either half now turns
 both off; holding it ~3s turns the board back on.
 
-## Example: keymap soft off + any-key wake (e.g. corne)
+## Example: keymap soft off + any-key wake 
 
 No dedicated key. Bind `&soft_off_plus` in the keymap, make the matrix kscan the
 wake source, and let the hold check poll the whole matrix:
