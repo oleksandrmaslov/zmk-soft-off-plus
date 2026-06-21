@@ -22,7 +22,7 @@
 #include <zmk/pm.h>
 #include <zmk/soft_off_plus/split_sync.h>
 
-LOG_MODULE_REGISTER(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
+LOG_MODULE_DECLARE(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
 
 struct behavior_soft_off_plus_config {
     uint32_t hold_time_ms;

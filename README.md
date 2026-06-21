@@ -1,44 +1,158 @@
 # zmk-soft-off-plus
 
-An enhanced soft-off module for ZMK. It layers two independent, configuration-
-and devicetree-gated features on top of ZMK's built-in soft off:
+An enhanced soft-off module for ZMK. Three independent, config- and
+devicetree-gated features that build on ZMK's built-in soft off:
 
-1. **Split simultaneous off** — pressing soft off on *either* half powers off
-   *both* halves over BLE.
-2. **Hold-to-wake delay** — after the board has gone to soft off, the power/wake
-   key must be *held* for a configurable time before the board actually turns
-   on. A brief, accidental press goes straight back to deep sleep (System OFF)
-   before the radio or display are powered, so it costs almost no battery.
+| Feature | What it does | Kconfig | Devicetree |
+| --- | --- | --- | --- |
+| **Enhanced soft off** | `&soft_off_plus` behavior; on a split, pressing it on **either** half powers off **both** over BLE | `ZMK_SOFT_OFF_PLUS_BEHAVIOR`, `…_SPLIT_SYNC` | `zmk,behavior-soft-off-plus` |
+| **Hold-to-wake** | After soft off, the wake key must be **held** for a set time or the board drops straight back to deep sleep (saves battery on accidental presses) | `ZMK_SOFT_OFF_PLUS_WAKE_DELAY` | `zmk,soft-off-plus-wake` |
+| **USB-gated wrapper** | `zmk,behavior-if-usb` runs a child behavior only while USB is connected — e.g. put `&bootloader` on the power key so DFU only works on the plugged-in half | `ZMK_SOFT_OFF_PLUS_IF_USB` | `zmk,behavior-if-usb` |
 
-It is the reworked successor to `zmk-soft-off-wake-delay`. The old approach
-forced the PM state at init with `pm_state_force()`, which is unreliable; this
-version goes back to sleep with `sys_poweroff()` after re-arming the wake GPIO,
-the same mechanism ZMK itself uses, and drives both halves over a dedicated GATT
-characteristic.
+Every feature is opt-in: each Kconfig is `default y` **only when its devicetree
+node is present**, so you just add the nodes you want and nothing else turns on.
 
-> Renaming note: the folder/module are now `zmk-soft-off-plus`. The git remote
-> still points at the old `zmk-soft-off-wake-delay` repository — rename it on the
-> host (or create a new repo) and update the remote when convenient.
+> Successor to `zmk-soft-off-wake-delay`. The old version forced the PM state at
+> init (`pm_state_force()`), which is unreliable; this one re-arms the wake GPIO
+> and uses `sys_poweroff()`, the same path ZMK uses, and drives both halves over
+> a dedicated GATT characteristic.
 
-## Requirements
+## 1. Requirements
 
 - `CONFIG_ZMK_PM_SOFT_OFF=y` (this module builds on ZMK soft off).
-- nRF (tested on nRF52840). Wake-from-System-OFF detection uses
-  `hwinfo_get_reset_cause()` / `RESET_LOW_POWER_WAKE`.
+- nRF target (tested on nRF52840). Hold-to-wake uses `hwinfo` reset-cause
+  (`RESET_LOW_POWER_WAKE`).
 
-## Kconfig
+## 2. Add the module to your build
 
-| Option | Default | Purpose |
+**Option A — west manifest** (recommended for GitHub Actions). In
+`config/west.yml`:
+
+```yaml
+manifest:
+  remotes:
+    - name: oleksandrmaslov
+      url-base: https://github.com/oleksandrmaslov
+  projects:
+    - name: zmk-soft-off-plus
+      remote: oleksandrmaslov
+      revision: main          # or a branch/tag
+```
+
+**Option B — local module.** Pass the path in your build command:
+
+```
+-DZMK_EXTRA_MODULES="<workspace>/zmk-soft-off-plus"
+```
+
+## 3. Config reference
+
+| Option | Default | Notes |
 | --- | --- | --- |
-| `CONFIG_ZMK_SOFT_OFF_PLUS` | auto (`y` if a soft-off-plus node exists) | Master switch. |
-| `CONFIG_ZMK_SOFT_OFF_PLUS_WAKE_DELAY` | auto (`y` if a `zmk,soft-off-plus-wake` node exists) | Boot-time hold-to-wake check. |
-| `CONFIG_ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY` | `50` | POST_KERNEL priority of the boot check. Must run before the kscan that owns the wake pins (lower it when polling matrix pins — see corne below). |
-| `CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC` | `y` on split | Cross-half "off" signalling over a dedicated GATT characteristic. |
-| `CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS` | `60` | Delay after sending the off signal before this half powers off, so the BLE write/notify is transmitted first. |
+| `ZMK_SOFT_OFF_PLUS` | auto | Master switch (depends on `ZMK_PM_SOFT_OFF`). |
+| `ZMK_SOFT_OFF_PLUS_BEHAVIOR` | auto | The `&soft_off_plus` behavior. |
+| `ZMK_SOFT_OFF_PLUS_SPLIT_SYNC` | `y` on split | Power both halves off together (needs `ZMK_SPLIT` + `BT`). |
+| `ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS` | `60` | Delay so the BLE off-signal flushes before powering off. |
+| `ZMK_SOFT_OFF_PLUS_WAKE_DELAY` | auto | Boot-time hold-to-wake check. |
+| `ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY` | `50` | POST_KERNEL priority; lower (e.g. `1`) when polling matrix pins. |
+| `ZMK_SOFT_OFF_PLUS_IF_USB` | auto | The `zmk,behavior-if-usb` wrapper. |
 
-## Devicetree
+"auto" = `default y` when the matching devicetree node exists.
 
-### Behavior — `zmk,behavior-soft-off-plus`
+## 4. Recipe A — dedicated power/soft-off switch (e.g. wafer)
+
+A physical power button per half, on its own pin, fed through a sideband kscan.
+Hold = power off both halves; **triple-tap = bootloader, only on the half that
+is plugged into USB**; hold to wake.
+
+```dts
+/ {
+    keys {
+        compatible = "gpio-keys";
+        soft_off_gpio_key: soft_off_gpio_key {
+            gpios = <&gpio0 3 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>; /* your button pin */
+        };
+    };
+
+    behaviors {
+        hw_soft_off: hw_soft_off {
+            compatible = "zmk,behavior-soft-off-plus";
+            #binding-cells = <0>;
+            hold-time-ms = <3000>;        /* hold this long to power off */
+        };
+
+        /* &bootloader, but only while THIS half is on USB */
+        if_usb_bootloader: if_usb_bootloader {
+            compatible = "zmk,behavior-if-usb";
+            #binding-cells = <0>;
+            bindings = <&bootloader>;
+        };
+
+        /* hold -> soft off (both halves) | 2 taps -> nothing | 3 taps -> DFU (USB only) */
+        power_btn_combo: power_btn_combo {
+            compatible = "zmk,behavior-tap-dance";
+            #binding-cells = <0>;
+            tapping-term-ms = <300>;
+            bindings = <&hw_soft_off>, <&none>, <&if_usb_bootloader>;
+        };
+    };
+
+    wakeup_scan: wakeup_scan {
+        compatible = "zmk,kscan-gpio-direct";
+        input-keys = <&soft_off_gpio_key>;
+        wakeup-source;
+    };
+
+    side_band_behavior_triggers: side_band_behavior_triggers {
+        compatible = "zmk,kscan-sideband-behaviors";
+        kscan = <&wakeup_scan>;
+        auto-enable;
+        wakeup-source;
+        soft_off {
+            column = <0>;
+            row = <0>;
+            bindings = <&power_btn_combo>;
+        };
+    };
+
+    /* arm the button as a wake source while in soft off */
+    soft_off_wakers {
+        compatible = "zmk,soft-off-wakeup-sources";
+        wakeup-sources = <&wakeup_scan>;
+    };
+
+    /* require a ~3s hold of the same button to actually turn on */
+    soft_off_plus_wake: soft_off_plus_wake {
+        compatible = "zmk,soft-off-plus-wake";
+        wake-gpios = <&gpio0 3 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>; /* same pin/flags */
+        wake-hold-ms = <3000>;
+        bypass-on-usb;
+    };
+};
+```
+
+`&bootloader` / `&none` come from ZMK's `behaviors.dtsi` (already included by
+keymaps). No `.conf` changes are needed — every feature auto-enables from the
+nodes above (assuming `CONFIG_ZMK_PM_SOFT_OFF=y`).
+
+> The `if-usb` wrapper is only "active" where you bind it — here, on the
+> dedicated power key's tap-dance. It is not compiled at all unless a
+> `zmk,behavior-if-usb` node exists, and each half checks **its own** USB.
+
+## 5. Recipe B — keymap soft off + any-key wake (e.g. corne)
+
+No extra hardware: bind `&soft_off_plus` on a key, wake on any key, and confirm
+the wake by holding any key.
+
+`config` / shield `.conf`:
+
+```conf
+CONFIG_ZMK_PM_SOFT_OFF=y
+# the wake check polls matrix pins, so it must run before the kscan driver
+CONFIG_ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY=1
+```
+
+Overlay / shield `.dtsi`:
 
 ```dts
 / {
@@ -46,131 +160,53 @@ characteristic.
         soft_off_plus: soft_off_plus {
             compatible = "zmk,behavior-soft-off-plus";
             #binding-cells = <0>;
-            hold-time-ms = <1200>; /* hold this long before release to fire; 0 = on release */
+            hold-time-ms = <1200>;
         };
     };
-};
-```
 
-Bind `&soft_off_plus` from a keymap, or from a dedicated power key via
-`zmk,kscan-sideband-behaviors`. The behavior has **central locality**: from a
-keymap it always runs on the central, which then powers off every peripheral.
-When invoked locally on a peripheral (e.g. a dedicated power key wired through a
-sideband kscan) it notifies the central instead. Either way both halves go off.
-
-### Hold-to-wake — `zmk,soft-off-plus-wake`
-
-```dts
-/ {
-    soft_off_plus_wake: soft_off_plus_wake {
-        compatible = "zmk,soft-off-plus-wake";
-        wake-gpios = <&gpio0 3 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>; /* same pin(s) as the wake key */
-        /* strobe-gpios = <...>;  // columns to drive for a matrix wake key */
-        wake-hold-ms = <3000>;
-        bypass-on-usb; /* skip the hold while USB is connected */
-    };
-};
-```
-
-| Property | Required | Description |
-| --- | --- | --- |
-| `wake-gpios` | yes | Input(s) polled at boot. Use the same active-level flags as the wake key. For a matrix key, the row/sense line(s). |
-| `strobe-gpios` | no | Output(s) driven active while polling and left driven in System OFF (matrix column(s)). |
-| `wake-hold-ms` | no (1000) | How long the input(s) must stay active to confirm a wake. |
-| `bypass-on-usb` | no | Skip the hold requirement while USB is powered. |
-
-The hold-to-wake check runs only when the reset was a wake from System OFF, so a
-normal boot, USB plug, or reset button is unaffected. On a non-confirmed wake it
-re-arms the wake input sense and calls `sys_poweroff()` immediately.
-
-## Example: dedicated power key per half (e.g. wafer)
-
-Each half already has a dedicated GPIO power key fed through
-`zmk,kscan-sideband-behaviors`. Point the sideband binding at `&soft_off_plus`
-(set `compatible = "zmk,behavior-soft-off-plus"` on the existing behavior),
-add a `zmk,soft-off-plus-wake` node on the same pin, and keep the existing
-`zmk,soft-off-wakeup-sources`. Pressing/holding the key on either half now turns
-both off; holding it ~3s turns the board back on.
-
-## USB-gated bootloader on the power key — `zmk,behavior-if-usb`
-
-`zmk,behavior-if-usb` forwards to a child behavior only while USB is connected on
-the half that runs it. Combined with `zmk,behavior-tap-dance` it lets one power
-key do several things, while keeping a destructive action like `&bootloader`
-behind a deliberate, USB-only gesture — so DFU can only be entered on the half
-that is actually plugged in, and not by accident on battery:
-
-```dts
-/ {
-    behaviors {
-        if_usb_bootloader: if_usb_bootloader {
-            compatible = "zmk,behavior-if-usb";
-            #binding-cells = <0>;
-            bindings = <&bootloader>;   /* only while USB is powered */
-        };
-
-        power_btn_combo: power_btn_combo {
-            compatible = "zmk,behavior-tap-dance";
-            #binding-cells = <0>;
-            tapping-term-ms = <300>;
-            /* hold -> soft off (both halves); 2 taps -> nothing;
-             * 3 taps -> bootloader, only on the USB-connected half */
-            bindings = <&hw_soft_off>, <&none>, <&if_usb_bootloader>;
-        };
-    };
-};
-```
-
-`bindings` takes the behavior to run while USB is powered (first entry). If USB
-is not connected the press is swallowed. `&bootloader` resolves from ZMK's
-`behaviors.dtsi` (already included by keymaps).
-
-## Example: keymap soft off + any-key wake (e.g. corne)
-
-No dedicated key. Bind `&soft_off_plus` in the keymap, make the matrix kscan the
-wake source, and let the hold check poll the whole matrix:
-
-```dts
-/ {
     soft_off_wakers {
         compatible = "zmk,soft-off-wakeup-sources";
-        wakeup-sources = <&kscan0>; /* any key wakes */
+        wakeup-sources = <&kscan0>;   /* any key wakes */
     };
+
     soft_off_plus_wake: soft_off_plus_wake {
         compatible = "zmk,soft-off-plus-wake";
-        wake-gpios   = <&pro_micro 4 ...>, <&pro_micro 5 ...>, ...;   /* all rows  */
-        strobe-gpios = <&pro_micro 14 ...>, <&pro_micro 15 ...>, ...; /* all cols  */
+        wake-gpios   = <&pro_micro 4 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,  /* all rows */
+                       <&pro_micro 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+                       <&pro_micro 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>,
+                       <&pro_micro 7 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+        strobe-gpios = <&pro_micro 14 GPIO_ACTIVE_HIGH>,                    /* all cols */
+                       <&pro_micro 15 GPIO_ACTIVE_HIGH>,
+                       <&pro_micro 18 GPIO_ACTIVE_HIGH>,
+                       <&pro_micro 19 GPIO_ACTIVE_HIGH>,
+                       <&pro_micro 20 GPIO_ACTIVE_HIGH>,
+                       <&pro_micro 21 GPIO_ACTIVE_HIGH>;
         wake-hold-ms = <1200>;
         bypass-on-usb;
     };
 };
 ```
 
-Because it polls matrix pins, set
-`CONFIG_ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY=1` so the check runs before
-the kscan driver claims them.
+Then drop `&soft_off_plus` onto a key in your keymap. To require a specific wake
+key instead of "any key", narrow `wakeup-sources` to a `zmk,gpio-key-wakeup-trigger`
+and `wake-gpios`/`strobe-gpios` to that one row/column.
 
-## Build wiring
+## 6. Node/behavior reference
 
-This repo is consumed as an extra Zephyr module. Add its path to
-`ZMK_EXTRA_MODULES` for each build, alongside the other local modules, e.g.:
+**`zmk,behavior-soft-off-plus`** — `hold-time-ms` (default 0 = trigger on
+release). Central locality: from a keymap it runs on the central; via a sideband
+key it runs on whichever half, which then signals the other.
 
-```
--DZMK_EXTRA_MODULES="<ws>/zmk-nice-view-hid;<ws>/zmk-raw-hid;<ws>/zmk-split-peripheral-output-relay;<ws>/zmk-soft-off-plus"
-```
+**`zmk,soft-off-plus-wake`** — `wake-gpios` (required, the input(s) to poll),
+`strobe-gpios` (optional outputs to drive for a matrix key), `wake-hold-ms`
+(default 1000), `bypass-on-usb` (skip the hold while on USB).
 
-(There is no `config/west.yml` entry; modules here are wired via
-`ZMK_EXTRA_MODULES`.) Once the module is on the build and a soft-off-plus node is
-present in devicetree, the relevant Kconfig options enable themselves.
+**`zmk,behavior-if-usb`** — `bindings` (the child behavior to run while USB is
+powered). `#binding-cells = <0>`.
 
-## How "both halves off" works
+## 7. How "both halves off" works
 
-The behavior never relies on ZMK's behavior relay (a dedicated/sideband key
-bypasses it). Instead a small GATT service carries a one-byte off command:
-
-- **central → peripheral(s):** the central writes the command to each peripheral.
-- **peripheral → central:** the peripheral notifies the central.
-
-The receiving side defers the power-off to a work item, so it never runs inside
-a Bluetooth callback. Off-together is supported; wake-together is not, since a
-half in System OFF cannot receive BLE — wake each half with its own key.
+A dedicated GATT service carries a one-byte off command between halves: the
+central writes it to each peripheral, a peripheral notifies the central; the
+receiver powers off from a work item. Off-together is supported; wake-together
+is not (a half in System OFF can't receive BLE) — wake each half with its own key.
