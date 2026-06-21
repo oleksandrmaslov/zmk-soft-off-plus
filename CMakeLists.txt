@@ -4,6 +4,10 @@ zephyr_library()
 
 zephyr_include_directories(include)
 
+# ZMK app headers (zmk/pm.h, zmk/behavior.h, zmk/ble.h, drivers/behavior.h, ...).
+# ZMK marks its app include dir PRIVATE, so modules must add it explicitly.
+zephyr_include_directories(${APPLICATION_SOURCE_DIR}/include)
+
 # Shared log module registration (compiled whenever the module is enabled).
 zephyr_library_sources_ifdef(CONFIG_ZMK_SOFT_OFF_PLUS src/soft_off_plus.c)
 
