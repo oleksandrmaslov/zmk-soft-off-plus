@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+%YAML 1.2
+---
+description: |
+  Boot-time "hold to wake" delay for ZMK soft off. When the device wakes from
+  System OFF (a reset on nRF), the listed wake GPIO(s) must remain active for at
+  least wake-hold-ms or the device immediately returns to System OFF.
+
+compatible: "zmk,soft-off-plus-wake"
+
+properties:
+  wake-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      GPIO input(s) polled at boot to detect the wake key being held. Use the
+      same pin(s) and active-level flags as your soft-off wake key. For a matrix
+      wake key this is the row (sense) line; also set strobe-gpios.
+
+  strobe-gpios:
+    type: phandle-array
+    description: |
+      Optional output(s) driven active while polling so a matrix wake key can be
+      read (typically the column of the wake key). They are left driven when
+      returning to System OFF so the key can wake the board again.
+
+  wake-hold-ms:
+    type: int
+    default: 1000
+    description: Milliseconds the wake input(s) must stay active to confirm a wake.
+
+  bypass-on-usb:
+    type: boolean
+    description: Skip the hold requirement when USB power is present.
+...

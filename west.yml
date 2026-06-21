@@ -8,4 +8,4 @@ manifest:
       revision: main
       import: app/west.yml
   self:
-    path: modules/zmk-soft-off-wake-delay
+    path: modules/zmk-soft-off-plus

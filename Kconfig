@@ -1,20 +1,64 @@
 # SPDX-License-Identifier: MIT
 
-menu "ZMK Long-Press Wake"
+menu "ZMK Soft Off Plus"
 
-config ZMK_LONG_PRESS_WAKE
-bool "ZMK long-press wake and external power control"
-default y
-help
-  Enable long-press wake filtering from SOFT-OFF along with optional external
-  power gating controlled via devicetree.
+config ZMK_SOFT_OFF_PLUS
+	bool "ZMK soft-off-plus (wake delay + split simultaneous off)"
+	depends on ZMK_PM_SOFT_OFF
+	default y if DT_HAS_ZMK_BEHAVIOR_SOFT_OFF_PLUS_ENABLED || DT_HAS_ZMK_SOFT_OFF_PLUS_WAKE_ENABLED
+	help
+	  Umbrella switch for the soft-off-plus module. It provides an enhanced
+	  soft-off behavior that can power off both halves of a split keyboard
+	  together over BLE, plus a boot-time "hold to wake" delay so a brief press
+	  of the power key does not turn the board on.
 
-if ZMK_LONG_PRESS_WAKE
+	  Requires ZMK soft off (CONFIG_ZMK_PM_SOFT_OFF).
 
-module = zmk_long_press_wake
-module-str = "ZMK Long-Press Wake"
+if ZMK_SOFT_OFF_PLUS
+
+config ZMK_SOFT_OFF_PLUS_WAKE_DELAY
+	bool "Require a long press to wake from soft off"
+	default y if DT_HAS_ZMK_SOFT_OFF_PLUS_WAKE_ENABLED
+	select HWINFO
+	select POWEROFF
+	help
+	  When the board wakes from soft off (a System OFF reset on nRF), poll the
+	  configured wake GPIO(s) and only continue booting if they stay active for
+	  at least "wake-hold-ms". Otherwise immediately re-arm the wake source and
+	  return to System OFF without powering up the radio or display. Configure
+	  with a "zmk,soft-off-plus-wake" devicetree node.
+
+config ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY
+	int "Wake-delay boot check init priority (POST_KERNEL)"
+	depends on ZMK_SOFT_OFF_PLUS_WAKE_DELAY
+	default 50
+	help
+	  POST_KERNEL init priority for the boot-time hold check. It runs before the
+	  display panel (POST_KERNEL 85) and BLE (APPLICATION 50), and blocks while
+	  polling, so a spurious wake returns to System OFF before those rails are
+	  brought up. Lower runs earlier.
+
+config ZMK_SOFT_OFF_PLUS_SPLIT_SYNC
+	bool "Power off both split halves together"
+	depends on ZMK_SPLIT && BT
+	default y if ZMK_SPLIT
+	help
+	  Use a dedicated GATT characteristic so that triggering soft-off-plus on
+	  either half powers off both halves. The central writes an off command to
+	  its peripheral(s); a peripheral notifies the central.
+
+config ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS
+	int "BLE off-signal flush delay (ms)"
+	depends on ZMK_SOFT_OFF_PLUS_SPLIT_SYNC
+	default 60
+	help
+	  Time to wait after sending the cross-half off signal before this half
+	  powers off, so the BLE write/notification is transmitted first.
+
+module = ZMK_SOFT_OFF_PLUS
+module-str = "ZMK Soft Off Plus"
 source "subsys/logging/Kconfig.template.log_config"
 
-endif # ZMK_LONG_PRESS_WAKE
+endif # ZMK_SOFT_OFF_PLUS
 
 endmenu

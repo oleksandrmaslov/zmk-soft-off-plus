@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+%YAML 1.2
+---
+description: |
+  Enhanced soft-off behavior. Times the hold locally on whichever half runs it
+  and, when CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC is enabled, powers off both
+  halves of a split keyboard together over BLE.
+
+compatible: "zmk,behavior-soft-off-plus"
+
+include: zero_param.yaml
+
+properties:
+  hold-time-ms:
+    type: int
+    default: 0
+    description: |
+      Minimum time in milliseconds the key must be held before releasing for the
+      soft-off to trigger. 0 triggers on release regardless of hold time.
+...
