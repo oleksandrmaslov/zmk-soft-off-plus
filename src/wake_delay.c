@@ -59,8 +59,8 @@ static bool wake_usb_bypass(void) {
 }
 
 static void wake_drive_strobes(void) {
+#if DT_NODE_HAS_PROP(WAKE_NODE, strobe_gpios)
     for (size_t i = 0; i < NUM_STROBE_GPIOS; i++) {
-#if NUM_STROBE_GPIOS > 0
         if (!gpio_is_ready_dt(&strobe_gpios[i])) {
             continue;
         }
@@ -68,8 +68,8 @@ static void wake_drive_strobes(void) {
         if (ret < 0) {
             LOG_WRN("soft-off-plus: strobe GPIO config failed (%d)", ret);
         }
-#endif
     }
+#endif
 }
 
 static bool wake_any_active(void) {
