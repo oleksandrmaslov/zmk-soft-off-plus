@@ -50,6 +50,31 @@ static const struct gpio_dt_spec strobe_gpios[] = {
 #define NUM_STROBE_GPIOS 0
 #endif
 
+/* External-power rail control, if the board exposes a zmk,ext-power node. We
+ * force it inactive for the duration of the boot-time hold check so an
+ * unconfirmed wake never lights the display or other external peripherals.
+ * The off level is retained when we drop back to System OFF; on a confirmed
+ * wake ZMK's ext-power driver re-enables the rail at its normal init priority. */
+#define EXT_POWER_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(zmk_ext_power_generic)
+#if DT_NODE_HAS_STATUS(EXT_POWER_NODE, okay)
+static const struct gpio_dt_spec ext_power_gpios[] = {
+    DT_FOREACH_PROP_ELEM(EXT_POWER_NODE, control_gpios, SOP_GPIO_ELEM)};
+
+static void wake_force_ext_power_off(void) {
+    for (size_t i = 0; i < ARRAY_SIZE(ext_power_gpios); i++) {
+        if (!gpio_is_ready_dt(&ext_power_gpios[i])) {
+            continue;
+        }
+        int ret = gpio_pin_configure_dt(&ext_power_gpios[i], GPIO_OUTPUT_INACTIVE);
+        if (ret < 0) {
+            LOG_WRN("soft-off-plus: ext-power off failed (%d)", ret);
+        }
+    }
+}
+#else
+static void wake_force_ext_power_off(void) {}
+#endif
+
 static bool wake_usb_bypass(void) {
 #if DT_NODE_HAS_PROP(WAKE_NODE, bypass_on_usb) && IS_ENABLED(CONFIG_ZMK_USB)
     return zmk_usb_is_powered();
@@ -115,6 +140,11 @@ static int wake_delay_init(void) {
         LOG_INF("soft-off-plus: USB present; bypassing wake hold");
         return 0;
     }
+
+    /* Committed to a hold check on battery: keep external peripherals (e.g. the
+     * display) dark until the wake is confirmed, so a too-short press cannot
+     * power them. */
+    wake_force_ext_power_off();
 
     for (size_t i = 0; i < NUM_WAKE_GPIOS; i++) {
         if (!gpio_is_ready_dt(&wake_gpios[i])) {

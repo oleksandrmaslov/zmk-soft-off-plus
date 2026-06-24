@@ -52,6 +52,13 @@ static inline void sop_request_local_soft_off(void) { k_work_submit(&sop_soft_of
 /* ---------------------------------------------------------------------------
  * Central: GATT client. Discovers the off characteristic on each peripheral,
  * subscribes for notifications, and writes the off command on demand.
+ *
+ * Discovery is driven from a retrying work item rather than directly from the
+ * connected callback: ZMK's own split client kicks off a GATT discovery the
+ * instant the link comes up, and only one GATT procedure can be active per
+ * connection, so a discovery started from our connected callback races ZMK's
+ * and fails with -EBUSY. The work item waits until the link is encrypted and
+ * the ATT bearer is free, then retries until it has our handle.
  * ------------------------------------------------------------------------- */
 
 #include <zmk/ble.h>
@@ -59,6 +66,7 @@ static inline void sop_request_local_soft_off(void) { k_work_submit(&sop_soft_of
 struct sop_peripheral_slot {
     struct bt_conn *conn;
     uint16_t off_handle;
+    bool discovering;
     struct bt_gatt_discover_params discover_params;
     struct bt_gatt_discover_params sub_discover_params;
     struct bt_gatt_subscribe_params subscribe_params;
@@ -67,6 +75,13 @@ struct sop_peripheral_slot {
 static struct sop_peripheral_slot peripherals[ZMK_SPLIT_BLE_PERIPHERAL_COUNT];
 
 static const struct bt_uuid_128 sop_service_uuid = BT_UUID_INIT_128(ZMK_SOFT_OFF_PLUS_SVC_UUID);
+
+static void sop_discover_work_cb(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(sop_discover_work, sop_discover_work_cb);
+
+/* Long enough for ZMK's own connect-time discovery to finish and free the ATT
+ * bearer before we (re)try ours. */
+#define SOP_DISCOVER_RETRY_MS 500
 
 static struct sop_peripheral_slot *sop_slot_for_conn(struct bt_conn *conn) {
     for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
@@ -82,6 +97,7 @@ static struct sop_peripheral_slot *sop_reserve_slot(struct bt_conn *conn) {
         if (peripherals[i].conn == NULL) {
             peripherals[i].conn = conn;
             peripherals[i].off_handle = 0;
+            peripherals[i].discovering = false;
             return &peripherals[i];
         }
     }
@@ -104,30 +120,42 @@ static uint8_t sop_notify_cb(struct bt_conn *conn, struct bt_gatt_subscribe_para
 static uint8_t sop_chrc_discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                      struct bt_gatt_discover_params *params) {
     ARG_UNUSED(params);
-    if (!attr || !attr->user_data) {
-        return BT_GATT_ITER_STOP;
-    }
     struct sop_peripheral_slot *slot = sop_slot_for_conn(conn);
     if (!slot) {
         return BT_GATT_ITER_STOP;
     }
+    if (!attr || !attr->user_data) {
+        /* Walked the whole service without finding our characteristic; let the
+         * work item decide whether to retry. */
+        slot->discovering = false;
+        return BT_GATT_ITER_STOP;
+    }
 
     const struct bt_uuid *chrc_uuid = ((struct bt_gatt_chrc *)attr->user_data)->uuid;
-    if (bt_uuid_cmp(chrc_uuid, BT_UUID_DECLARE_128(ZMK_SOFT_OFF_PLUS_CHRC_UUID)) == 0) {
-        slot->off_handle = bt_gatt_attr_value_handle(attr);
-        slot->subscribe_params.disc_params = &slot->sub_discover_params;
-        slot->subscribe_params.end_handle = slot->discover_params.end_handle;
-        slot->subscribe_params.value_handle = slot->off_handle;
-        slot->subscribe_params.notify = sop_notify_cb;
-        slot->subscribe_params.value = BT_GATT_CCC_NOTIFY;
-        atomic_set(slot->subscribe_params.flags, BT_GATT_SUBSCRIBE_FLAG_NO_RESUB);
+    if (bt_uuid_cmp(chrc_uuid, BT_UUID_DECLARE_128(ZMK_SOFT_OFF_PLUS_CHRC_UUID)) != 0) {
+        /* Not ours; keep walking the rest of the service's characteristics. */
+        return BT_GATT_ITER_CONTINUE;
+    }
 
-        int err = bt_gatt_subscribe(conn, &slot->subscribe_params);
-        if (err && err != -EALREADY) {
-            LOG_ERR("soft-off-plus: subscribe failed (%d)", err);
-        } else {
-            LOG_DBG("soft-off-plus: subscribed to peripheral off characteristic");
-        }
+    slot->off_handle = bt_gatt_attr_value_handle(attr);
+    slot->discovering = false;
+
+    slot->subscribe_params.disc_params = &slot->sub_discover_params;
+    slot->subscribe_params.end_handle = slot->discover_params.end_handle;
+    slot->subscribe_params.value_handle = slot->off_handle;
+    slot->subscribe_params.notify = sop_notify_cb;
+    slot->subscribe_params.value = BT_GATT_CCC_NOTIFY;
+    atomic_set(slot->subscribe_params.flags, BT_GATT_SUBSCRIBE_FLAG_NO_RESUB);
+
+    /* The notify subscription is only used by the peripheral->central direction
+     * (sideband power key). Failing it does not stop the central->peripheral
+     * write path, which is all we need once off_handle is set. */
+    int err = bt_gatt_subscribe(conn, &slot->subscribe_params);
+    if (err && err != -EALREADY) {
+        LOG_WRN("soft-off-plus: subscribe failed (%d)", err);
+    } else {
+        LOG_DBG("soft-off-plus: discovered peripheral off characteristic (handle %u)",
+                slot->off_handle);
     }
     return BT_GATT_ITER_STOP;
 }
@@ -135,32 +163,83 @@ static uint8_t sop_chrc_discovery_cb(struct bt_conn *conn, const struct bt_gatt_
 static uint8_t sop_service_discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                         struct bt_gatt_discover_params *params) {
     ARG_UNUSED(params);
-    if (!attr) {
-        return BT_GATT_ITER_STOP;
-    }
     struct sop_peripheral_slot *slot = sop_slot_for_conn(conn);
     if (!slot) {
         return BT_GATT_ITER_STOP;
     }
+    if (!attr || !attr->user_data) {
+        slot->discovering = false;
+        return BT_GATT_ITER_STOP;
+    }
 
+    const struct bt_gatt_service_val *svc = attr->user_data;
+
+    /* Constrain the characteristic walk to this service's handle range. A bare
+     * 0x0001..0xffff walk would hit the GAP/GATT characteristics first and stop
+     * there, so our characteristic would never be found. */
     slot->discover_params.uuid = NULL;
     slot->discover_params.func = sop_chrc_discovery_cb;
+    slot->discover_params.start_handle = attr->handle + 1;
+    slot->discover_params.end_handle = svc->end_handle;
     slot->discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+
     int err = bt_gatt_discover(conn, &slot->discover_params);
     if (err) {
-        LOG_ERR("soft-off-plus: characteristic discovery failed (%d)", err);
+        LOG_WRN("soft-off-plus: characteristic discovery failed (%d)", err);
+        slot->discovering = false; /* allow the work item to retry */
     }
     return BT_GATT_ITER_STOP;
 }
 
+static void sop_begin_discovery(struct sop_peripheral_slot *slot) {
+    slot->discover_params.uuid = &sop_service_uuid.uuid;
+    slot->discover_params.func = sop_service_discovery_cb;
+    slot->discover_params.start_handle = 0x0001;
+    slot->discover_params.end_handle = 0xffff;
+    slot->discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+
+    int err = bt_gatt_discover(slot->conn, &slot->discover_params);
+    if (err) {
+        /* Most likely -EBUSY while ZMK's own discovery runs; the work item
+         * reschedules itself and we try again. */
+        LOG_DBG("soft-off-plus: service discovery busy (%d), will retry", err);
+        return;
+    }
+    slot->discovering = true;
+}
+
+static void sop_discover_work_cb(struct k_work *work) {
+    ARG_UNUSED(work);
+    bool pending = false;
+
+    for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
+        struct sop_peripheral_slot *slot = &peripherals[i];
+        if (slot->conn == NULL || slot->off_handle != 0) {
+            continue;
+        }
+        pending = true;
+        if (slot->discovering) {
+            continue; /* a discovery procedure is already in flight */
+        }
+        if (bt_conn_get_security(slot->conn) < BT_SECURITY_L2) {
+            continue; /* wait until the inter-half link is encrypted */
+        }
+        sop_begin_discovery(slot);
+    }
+
+    if (pending) {
+        k_work_reschedule(&sop_discover_work, K_MSEC(SOP_DISCOVER_RETRY_MS));
+    }
+}
+
 static void sop_connected(struct bt_conn *conn, uint8_t conn_err) {
     struct bt_conn_info info;
-    if (bt_conn_get_info(conn, &info) != 0 || info.role != BT_CONN_ROLE_CENTRAL) {
+    if (conn_err || bt_conn_get_info(conn, &info) != 0 || info.role != BT_CONN_ROLE_CENTRAL) {
         /* Only the inter-half link, on which we are the BLE central, matters. */
         return;
     }
-    if (conn_err) {
-        return;
+    if (sop_slot_for_conn(conn) != NULL) {
+        return; /* already tracked */
     }
 
     struct sop_peripheral_slot *slot = sop_reserve_slot(conn);
@@ -169,14 +248,17 @@ static void sop_connected(struct bt_conn *conn, uint8_t conn_err) {
         return;
     }
 
-    slot->discover_params.uuid = &sop_service_uuid.uuid;
-    slot->discover_params.func = sop_service_discovery_cb;
-    slot->discover_params.start_handle = 0x0001;
-    slot->discover_params.end_handle = 0xffff;
-    slot->discover_params.type = BT_GATT_DISCOVER_PRIMARY;
-    int err = bt_gatt_discover(conn, &slot->discover_params);
-    if (err) {
-        LOG_ERR("soft-off-plus: service discovery failed (%d)", err);
+    /* Defer discovery so it does not race ZMK's connect-time discovery. */
+    k_work_reschedule(&sop_discover_work, K_MSEC(SOP_DISCOVER_RETRY_MS));
+}
+
+static void sop_security_changed(struct bt_conn *conn, bt_security_t level,
+                                 enum bt_security_err err) {
+    ARG_UNUSED(level);
+    ARG_UNUSED(err);
+    /* Once the link is encrypted, discovery can proceed; nudge the work item. */
+    if (sop_slot_for_conn(conn) != NULL) {
+        k_work_reschedule(&sop_discover_work, K_MSEC(50));
     }
 }
 
@@ -188,12 +270,14 @@ static void sop_disconnected(struct bt_conn *conn, uint8_t reason) {
     }
     slot->conn = NULL;
     slot->off_handle = 0;
+    slot->discovering = false;
     slot->subscribe_params.value_handle = 0;
 }
 
 static struct bt_conn_cb sop_conn_callbacks = {
     .connected = sop_connected,
     .disconnected = sop_disconnected,
+    .security_changed = sop_security_changed,
 };
 
 static int sop_central_init(void) {

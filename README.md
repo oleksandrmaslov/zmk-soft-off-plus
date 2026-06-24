@@ -199,7 +199,13 @@ key it runs on whichever half, which then signals the other.
 
 **`zmk,soft-off-plus-wake`** — `wake-gpios` (required, the input(s) to poll),
 `strobe-gpios` (optional outputs to drive for a matrix key), `wake-hold-ms`
-(default 1000), `bypass-on-usb` (skip the hold while on USB).
+(default 1000), `bypass-on-usb` (skip the hold while on USB). For a matrix wake
+key, `wake-gpios` is the key's **row** (sense) line and `strobe-gpios` is its
+**column** (drive) line — they must match the row/column GPIOs of that exact
+key in your kscan, or the key can't be sensed at wake. While the hold check is
+running on battery, the module forces any `zmk,ext-power` rail off so an
+unconfirmed (too-short) wake never lights the display or other external
+peripherals; the rail is re-enabled normally once the wake is confirmed.
 
 **`zmk,behavior-if-usb`** — `bindings` (the child behavior to run while USB is
 powered). `#binding-cells = <0>`.
