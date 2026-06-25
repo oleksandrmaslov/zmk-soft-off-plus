@@ -234,9 +234,12 @@ and `wake-gpios`/`strobe-gpios` to that one row/column.
 elapsed. `trigger-on-hold` makes it **two-phase, phone-style**: the moment
 `hold-time-ms` passes while you're still holding, the keyboard's components are
 **dropped for visual confirmation** (`zmk_pm_suspend_devices()` runs every
-device's PM suspend — ext-power/display, radio, RGB, …) and the other half is
-told to power off; the **real System OFF is deferred until you release**, so the
-wake key's pin is inactive when the board sleeps. That sidesteps the nRF
+device's PM suspend — ext-power/display, radio, RGB, …) — but this is a
+*display-only* drop: it does **not** power off and does **not** signal the other
+half. On the matrix path the GLOBAL relay runs the same phase 1 on both halves,
+so both screens blank. The **real System OFF *and* the cross-half off-signal are
+deferred until you release**, so the wake key's pin is inactive when the board
+sleeps. That sidesteps the nRF
 *"System OFF while DETECT is high → instant re-wake"* trap, so it's **safe on a
 key that is also the wake source**. Releasing before `hold-time-ms` cancels with
 nothing dropped.
@@ -251,7 +254,11 @@ BLE.
 > DETECT is high causes a wakeup from System OFF reset,"* so it would re-wake
 > instantly. Splitting it — suspend devices on hold (looks off), `sys_poweroff()`
 > on release (pin low, sleeps cleanly) — gives the phone-style feel while keeping
-> the wake correct.
+> the wake correct. The cross-half off-signal is sent on release too, never on
+> hold: signalling on hold would make the central power off mid-hold (via the
+> peripheral's notify), and a powered-off central can no longer relay your
+> release to the peripheral — which would strand the peripheral *screen-off but
+> never actually in System OFF*, unable to wake from its own key.
 >
 > Phase 1 calls `display_blanking_on()` (the same call ZMK's blank-on-idle uses)
 > for a clean panel-level blank on displays that support it (an OLED, or an LS0xx

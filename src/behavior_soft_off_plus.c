@@ -89,6 +89,20 @@ static void soft_off_plus_blank_display(void) {
  * power off yet. The real System OFF happens on release (phase 2), so the wake
  * key's GPIO is no longer active when we enter System OFF (otherwise the nRF
  * re-wakes instantly: "System OFF while DETECT is high causes a wakeup reset").
+ *
+ * Phase 1 is *visual confirmation only*. It must NOT signal the other half to
+ * power off and must NOT power off itself:
+ *
+ *  - On the matrix path the GLOBAL keymap relay already runs this same phase 1
+ *    on the other half, so both screens blank without any cross-half signal.
+ *  - If phase 1 *did* signal, the peripheral's notify would make the central run
+ *    a full zmk_pm_soft_off() mid-hold. A central that has powered off can no
+ *    longer relay the key-release that drives the peripheral's phase 2, leaving
+ *    the peripheral stuck "screen off but never in System OFF" -- and therefore
+ *    unable to wake from its own key, because its wake source was never armed.
+ *
+ * So both the real System OFF and the cross-half off-signal wait for release
+ * (phase 2 -> soft_off_plus_trigger()).
  */
 static void soft_off_plus_hold_work_cb(struct k_work *work) {
     struct k_work_delayable *dwork = k_work_delayable_from_work(work);
@@ -97,14 +111,6 @@ static void soft_off_plus_hold_work_cb(struct k_work *work) {
 
     LOG_INF("soft-off-plus: hold reached; dropping components (release to power off)");
 
-    /* Tell the other half to power off now -- it has no key held, so it can
-     * enter System OFF cleanly and immediately. */
-    zmk_soft_off_plus_signal_peers();
-#if CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS > 0
-    /* Let the cross-half off-signal flush before we suspend our own radio. */
-    k_msleep(CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS);
-#endif
-
     /* Blank the screen first (while it still has power), the same call ZMK's
      * blank-on-idle uses. */
     soft_off_plus_blank_display();
@@ -112,7 +118,8 @@ static void soft_off_plus_hold_work_cb(struct k_work *work) {
     /* Universal "looks off": run every device's PM suspend (ext-power -> display
      * loses power, radio down, RGB off, any future device). Wakeup-enabled
      * devices such as the kscan are skipped, so the key release still arrives
-     * through the normal behavior path. */
+     * through the normal behavior path, and the BLE link stays up so the central
+     * can still relay our release. */
     zmk_pm_suspend_devices();
     data->dropped = true;
 }
@@ -148,12 +155,14 @@ static int on_keymap_binding_released(struct zmk_behavior_binding *binding,
         if (data->dropped) {
             /* Phase 2: components were already dropped at the hold (phase 1).
              * The key is now released (GPIO inactive), so it is safe to enter
-             * real System OFF -- DETECT is low, so the board won't re-wake. */
+             * real System OFF -- DETECT is low, so the board won't re-wake. This
+             * is the same claim + cross-half signal + power-off path as the
+             * trigger-on-release case below; signalling here (not in phase 1)
+             * keeps the central alive long enough to relay this release to the
+             * peripheral. */
             data->dropped = false;
-            if (zmk_soft_off_plus_claim_off()) {
-                LOG_INF("soft-off-plus: key released; entering System OFF");
-                zmk_pm_soft_off();
-            }
+            LOG_INF("soft-off-plus: key released; entering System OFF");
+            soft_off_plus_trigger();
         }
         /* Released before hold-time: hold_work never fired, nothing dropped. */
         return ZMK_BEHAVIOR_OPAQUE;
