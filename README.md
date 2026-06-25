@@ -5,17 +5,42 @@ devicetree-gated features that build on ZMK's built-in soft off:
 
 | Feature | What it does | Kconfig | Devicetree |
 | --- | --- | --- | --- |
-| **Enhanced soft off** | `&soft_off_plus` behavior; on a split, pressing it on **either** half powers off **both** | `ZMK_SOFT_OFF_PLUS_BEHAVIOR`, `…_SPLIT_SYNC` | `zmk,behavior-soft-off-plus` |
+| **Enhanced soft off** | `&soft_off_plus` behavior; powers off **both** halves even from a **dedicated/sideband power key** — the case ZMK's `&soft_off` can't cover (see below) | `ZMK_SOFT_OFF_PLUS_BEHAVIOR`, `…_SPLIT_SYNC` | `zmk,behavior-soft-off-plus` |
 | **Hold-to-wake** | After soft off, the wake key must be **held** for a set time or the board drops straight back to deep sleep (saves battery on accidental presses) | `ZMK_SOFT_OFF_PLUS_WAKE_DELAY` | `zmk,soft-off-plus-wake` |
 | **USB-gated wrapper** | `zmk,behavior-if-usb` runs a child behavior only while USB is connected — e.g. put `&bootloader` on the power key so DFU only works on the plugged-in half | `ZMK_SOFT_OFF_PLUS_IF_USB` | `zmk,behavior-if-usb` |
 
 Every feature is opt-in: each Kconfig is `default y` **only when its devicetree
 node is present**, so you just add the nodes you want and nothing else turns on.
 
+## What this fixes that ZMK's `&soft_off` doesn't
+
+ZMK's built-in `&soft_off` **already powers off both halves** when you bind it on
+a normal **keymap** key: a peripheral has no keymap, so its keypress is sent to
+the central, the central runs the behavior (`BEHAVIOR_LOCALITY_GLOBAL`) and
+relays it to every half, and each half powers itself off. If a keymap key is all
+you need, you do **not** need this module's behavior — use `&soft_off` and take
+only the hold-to-wake / if-usb features here.
+
+The gap is the **dedicated power key on its own pin, wired through
+`kscan-sideband-behaviors`** (Recipe A). A sideband key runs the behavior
+*locally* on the one half it's wired to and **bypasses the keymap relay**, so
+ZMK's `&soft_off` there powers off only that half — the other half stays on.
+`&soft_off_plus` closes this gap: when it runs on one half it sends a one-byte
+"off" command to the other half over a small dedicated GATT service (central →
+peripheral by write, peripheral → central by notify), so a sideband press on
+**either** half drops **both**. A one-shot guard keeps the keymap-relay path and
+this GATT path from ever powering a half off twice.
+
+So: keymap soft-off → ZMK already handles it (this behavior just rides the same
+relay, with the GATT as a harmless backup); **sideband/dedicated-power-key
+soft-off → this module is what makes both halves drop.** The hold-to-wake delay
+and the if-usb wrapper have no ZMK equivalent at all.
+
 > Successor to `zmk-soft-off-wake-delay`. The old version forced the PM state at
 > init (`pm_state_force()`), which is unreliable; this one re-arms the wake GPIO
-> and uses `sys_poweroff()`, the same path ZMK uses, and drives both halves over
-> a dedicated GATT characteristic.
+> and uses `sys_poweroff()`, the same path ZMK uses. Keymap presses ride ZMK's
+> behavior relay; a sideband press signals the other half over a dedicated GATT
+> characteristic.
 
 ## 1. Requirements
 
@@ -64,6 +89,11 @@ manifest:
 A physical power button per half, on its own pin, fed through a sideband kscan.
 Hold = power off both halves; **triple-tap = bootloader, only on the half that
 is plugged into USB**; hold to wake.
+
+> This is the case `&soft_off_plus` exists for (see
+> [What this fixes](#what-this-fixes-that-zmks-soft_off-doesnt)). The sideband
+> key runs the behavior locally on one half, so ZMK's `&soft_off` would leave the
+> other half on; the GATT off-signal here is what drops both.
 
 ```dts
 / {
@@ -143,6 +173,12 @@ nodes above (assuming `CONFIG_ZMK_PM_SOFT_OFF=y`).
 
 No extra hardware: bind `&soft_off_plus` on a key, wake on any key, and confirm
 the wake by holding any key.
+
+> For a **keymap** key like this, ZMK's built-in `&soft_off` already powers off
+> both halves — so the real reason to run this recipe is the **hold-to-wake**
+> feature. Using `&soft_off_plus` (instead of `&soft_off`) on the key is fine:
+> it rides the same relay, plus it keeps the off-signal working if you later add
+> a sideband power key. Swap in `&soft_off` if you prefer the built-in.
 
 `config` / shield `.conf`:
 
