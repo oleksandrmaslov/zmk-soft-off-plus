@@ -27,6 +27,10 @@
 #include <zmk/pm.h>
 #include <zmk/soft_off_plus/split_sync.h>
 
+#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && DT_HAS_CHOSEN(zephyr_display)
+#include <zephyr/drivers/display.h>
+#endif
+
 LOG_MODULE_DECLARE(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
 
 struct behavior_soft_off_plus_config {
@@ -37,6 +41,7 @@ struct behavior_soft_off_plus_config {
 struct behavior_soft_off_plus_data {
     uint32_t press_start;
     struct k_work_delayable hold_work;
+    bool dropped; /* trigger-on-hold phase 1 done: components suspended, waiting for release */
 };
 
 static void soft_off_plus_trigger(void) {
@@ -65,11 +70,51 @@ static void soft_off_plus_trigger(void) {
     zmk_pm_soft_off();
 }
 
-/* trigger-on-hold mode: fires once hold-time-ms elapses while the key is still
- * held, so the board powers off mid-hold (phone-style) instead of on release. */
+static void soft_off_plus_blank_display(void) {
+#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && DT_HAS_CHOSEN(zephyr_display)
+    const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+    if (device_is_ready(disp)) {
+        /* Same call ZMK uses for blank-on-idle: a clean panel-level blank for
+         * displays that support it (an OLED's display-off, or an LS0xx with
+         * disp-en-gpios). On a bare nice_view it's a no-op -- but that's fine:
+         * suspending ext-power below cuts the panel's VCC, and a Sharp memory
+         * LCD holds its image only *while powered*, so it blanks anyway. */
+        display_blanking_on(disp);
+    }
+#endif
+}
+
+/* trigger-on-hold, phase 1: once hold-time-ms elapses while the key is still
+ * held, drop the keyboard's components for visual confirmation -- but DO NOT
+ * power off yet. The real System OFF happens on release (phase 2), so the wake
+ * key's GPIO is no longer active when we enter System OFF (otherwise the nRF
+ * re-wakes instantly: "System OFF while DETECT is high causes a wakeup reset").
+ */
 static void soft_off_plus_hold_work_cb(struct k_work *work) {
-    ARG_UNUSED(work);
-    soft_off_plus_trigger();
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+    struct behavior_soft_off_plus_data *data =
+        CONTAINER_OF(dwork, struct behavior_soft_off_plus_data, hold_work);
+
+    LOG_INF("soft-off-plus: hold reached; dropping components (release to power off)");
+
+    /* Tell the other half to power off now -- it has no key held, so it can
+     * enter System OFF cleanly and immediately. */
+    zmk_soft_off_plus_signal_peers();
+#if CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS > 0
+    /* Let the cross-half off-signal flush before we suspend our own radio. */
+    k_msleep(CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS);
+#endif
+
+    /* Blank the screen first (while it still has power), the same call ZMK's
+     * blank-on-idle uses. */
+    soft_off_plus_blank_display();
+
+    /* Universal "looks off": run every device's PM suspend (ext-power -> display
+     * loses power, radio down, RGB off, any future device). Wakeup-enabled
+     * devices such as the kscan are skipped, so the key release still arrives
+     * through the normal behavior path. */
+    zmk_pm_suspend_devices();
+    data->dropped = true;
 }
 
 static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
@@ -80,8 +125,9 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
     const struct behavior_soft_off_plus_config *config = dev->config;
 
     if (config->trigger_on_hold) {
-        /* Arm the power-off for hold-time-ms from now; released earlier cancels
-         * it. hold-time-ms == 0 fires essentially on press. */
+        /* Phase 1 is armed for hold-time-ms from now; releasing earlier cancels
+         * it (nothing dropped). hold-time-ms == 0 drops essentially on press. */
+        data->dropped = false;
         k_work_schedule(&data->hold_work, K_MSEC(config->hold_time_ms));
     } else {
         data->press_start = k_uptime_get();
@@ -98,9 +144,18 @@ static int on_keymap_binding_released(struct zmk_behavior_binding *binding,
     const struct behavior_soft_off_plus_config *config = dev->config;
 
     if (config->trigger_on_hold) {
-        /* Released before the hold elapsed: cancel. If it already fired we are
-         * powering off anyway, so the cancel is a harmless no-op. */
         k_work_cancel_delayable(&data->hold_work);
+        if (data->dropped) {
+            /* Phase 2: components were already dropped at the hold (phase 1).
+             * The key is now released (GPIO inactive), so it is safe to enter
+             * real System OFF -- DETECT is low, so the board won't re-wake. */
+            data->dropped = false;
+            if (zmk_soft_off_plus_claim_off()) {
+                LOG_INF("soft-off-plus: key released; entering System OFF");
+                zmk_pm_soft_off();
+            }
+        }
+        /* Released before hold-time: hold_work never fired, nothing dropped. */
         return ZMK_BEHAVIOR_OPAQUE;
     }
 

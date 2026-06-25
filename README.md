@@ -231,15 +231,36 @@ and `wake-gpios`/`strobe-gpios` to that one row/column.
 
 **`zmk,behavior-soft-off-plus`** — `hold-time-ms` (default 0), `trigger-on-hold`
 (boolean). By default soft-off fires **on release** once `hold-time-ms` has
-elapsed. Set `trigger-on-hold` to fire **while the key is still held**, the
-moment `hold-time-ms` passes (phone-style "hold the power button"); a release
-before then cancels it. Use `trigger-on-hold` on a key bound *directly* to the
-behavior (e.g. a dedicated/sideband power key), not inside a tap-dance.
+elapsed. `trigger-on-hold` makes it **two-phase, phone-style**: the moment
+`hold-time-ms` passes while you're still holding, the keyboard's components are
+**dropped for visual confirmation** (`zmk_pm_suspend_devices()` runs every
+device's PM suspend — ext-power/display, radio, RGB, …) and the other half is
+told to power off; the **real System OFF is deferred until you release**, so the
+wake key's pin is inactive when the board sleeps. That sidesteps the nRF
+*"System OFF while DETECT is high → instant re-wake"* trap, so it's **safe on a
+key that is also the wake source**. Releasing before `hold-time-ms` cancels with
+nothing dropped.
 GLOBAL locality (like ZMK's `&soft_off`): from a keymap, ZMK runs it on the
 central **and** relays it to every peripheral, so each half powers *itself* off —
 no cross-half radio handshake needed. Via a `kscan-sideband-behaviors` key it
 bypasses locality and runs on only that half, which then signals the other over
 BLE.
+
+> **Why two-phase?** Powering off *while the key is held* can't work for a key
+> that also wakes the board: on nRF *"setting the system to System OFF while
+> DETECT is high causes a wakeup from System OFF reset,"* so it would re-wake
+> instantly. Splitting it — suspend devices on hold (looks off), `sys_poweroff()`
+> on release (pin low, sleeps cleanly) — gives the phone-style feel while keeping
+> the wake correct.
+>
+> Phase 1 calls `display_blanking_on()` (the same call ZMK's blank-on-idle uses)
+> for a clean panel-level blank on displays that support it (an OLED, or an LS0xx
+> wired with `disp-en-gpios`). On a **bare nice_view it's a no-op** — but the
+> screen still goes blank, because phase 1 also suspends `ext_power` and cuts the
+> panel's VCC. A Sharp memory LCD holds its image only *while powered* (no refresh
+> needed, but VCC required); remove VCC and the per-pixel memory loses it and it
+> blanks. So the nice_view blanks the same way it does on a normal ZMK soft-off —
+> by losing power, not by a blank command.
 
 **`zmk,soft-off-plus-wake`** — `wake-gpios` (required, the input(s) to poll),
 `strobe-gpios` (optional outputs to drive for a matrix key), `wake-hold-ms`

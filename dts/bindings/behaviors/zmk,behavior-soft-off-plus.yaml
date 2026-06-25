@@ -23,9 +23,14 @@ properties:
   trigger-on-hold:
     type: boolean
     description: |
-      Fire soft-off as soon as hold-time-ms elapses while the key is still held,
-      instead of waiting for release (phone-style "hold the power button"). A
-      release before hold-time-ms cancels it. Best on a key bound directly to
-      this behavior (e.g. a dedicated/sideband power key), not wrapped in a
-      tap-dance, since a tap-dance controls its child's press/release itself.
+      Two-phase, phone-style power-off. When hold-time-ms elapses while the key
+      is still held, the keyboard's components are dropped for visual
+      confirmation -- every device's PM suspend runs (ext-power/display, radio,
+      RGB, and anything added later) and the other split half is told to power
+      off. The actual System OFF is deferred until the key is RELEASED, so the
+      wake key's GPIO is no longer active when the board sleeps. This avoids the
+      nRF trap where "setting the system to System OFF while DETECT is high
+      causes a wakeup from System OFF reset," so it is safe even when this key is
+      also the wake source. Releasing before hold-time-ms cancels with nothing
+      dropped.
 ...
