@@ -26,11 +26,14 @@ properties:
       Two-phase, phone-style power-off. When hold-time-ms elapses while the key
       is still held, the keyboard's components are dropped for visual
       confirmation -- every device's PM suspend runs (ext-power/display, radio,
-      RGB, and anything added later) and the other split half is told to power
-      off. The actual System OFF is deferred until the key is RELEASED, so the
-      wake key's GPIO is no longer active when the board sleeps. This avoids the
-      nRF trap where "setting the system to System OFF while DETECT is high
-      causes a wakeup from System OFF reset," so it is safe even when this key is
-      also the wake source. Releasing before hold-time-ms cancels with nothing
-      dropped.
+      RGB, and anything added later) and the other split half is told to DROP
+      too, so both halves blank while held on a matrix key or a sideband key.
+      The half whose key is held defers its real System OFF until RELEASE, so the
+      wake key's GPIO is inactive when it sleeps (this avoids the nRF trap where
+      "setting the system to System OFF while DETECT is high causes a wakeup from
+      System OFF reset," making it safe even when this key is also the wake
+      source). A half with nothing held -- the non-wired half of a sideband
+      press -- has no wake key down, so it powers off as soon as it receives the
+      DROP, without waiting for a release to be relayed across the link.
+      Releasing before hold-time-ms cancels with nothing dropped.
 ...

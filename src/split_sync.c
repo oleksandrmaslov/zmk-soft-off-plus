@@ -21,6 +21,7 @@ LOG_MODULE_DECLARE(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
 #if !IS_ENABLED(CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC)
 
 int zmk_soft_off_plus_signal_peers(void) { return 0; }
+int zmk_soft_off_plus_signal_peers_drop(void) { return 0; }
 
 #else /* CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC */
 
@@ -48,7 +49,43 @@ static void sop_soft_off_work_cb(struct k_work *work) {
 }
 static K_WORK_DEFINE(sop_soft_off_work, sop_soft_off_work_cb);
 
-static inline void sop_request_local_soft_off(void) { k_work_submit(&sop_soft_off_work); }
+/* DROP requested by a peer (trigger-on-hold phase 1 on the other half).
+ *
+ * If this half is holding its own soft-off-plus key (matrix relay, or the
+ * sideband half the key is wired to), only blank -- it powers off on its own
+ * release, because the held key is also its wake source. If nothing is held
+ * here (a passive receiver, e.g. the non-wired half of a sideband press), the
+ * user has already committed to power-off by holding past hold-time and there is
+ * no held wake source to re-wake us, so just power off now -- no need to wait for
+ * a separate release signal to be relayed across the link. */
+static void sop_drop_work_cb(struct k_work *work) {
+    ARG_UNUSED(work);
+    if (zmk_soft_off_plus_hold_active()) {
+        LOG_INF("soft-off-plus: peer DROP; own key held, blank only");
+        zmk_soft_off_plus_drop_components();
+        return;
+    }
+    if (zmk_soft_off_plus_claim_off()) {
+        LOG_INF("soft-off-plus: peer DROP; nothing held here, powering off");
+        zmk_pm_soft_off();
+    }
+}
+static K_WORK_DEFINE(sop_drop_work, sop_drop_work_cb);
+
+/* Dispatch a received command byte. Runs from a BLE RX callback, so it only
+ * submits work -- the actual suspend/power-off happens off the callback. */
+static inline void sop_handle_cmd(uint8_t cmd) {
+    switch (cmd) {
+    case ZMK_SOFT_OFF_PLUS_CMD_OFF:
+        k_work_submit(&sop_soft_off_work);
+        break;
+    case ZMK_SOFT_OFF_PLUS_CMD_DROP:
+        k_work_submit(&sop_drop_work);
+        break;
+    default:
+        break;
+    }
+}
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 
@@ -114,8 +151,8 @@ static uint8_t sop_notify_cb(struct bt_conn *conn, struct bt_gatt_subscribe_para
         params->value_handle = 0U;
         return BT_GATT_ITER_STOP;
     }
-    if (length >= 1 && ((const uint8_t *)data)[0] == ZMK_SOFT_OFF_PLUS_CMD_OFF) {
-        sop_request_local_soft_off();
+    if (length >= 1) {
+        sop_handle_cmd(((const uint8_t *)data)[0]);
     }
     return BT_GATT_ITER_CONTINUE;
 }
@@ -291,8 +328,7 @@ static int sop_central_init(void) {
 }
 SYS_INIT(sop_central_init, APPLICATION, CONFIG_ZMK_BLE_INIT_PRIORITY);
 
-int zmk_soft_off_plus_signal_peers(void) {
-    uint8_t cmd = ZMK_SOFT_OFF_PLUS_CMD_OFF;
+static int sop_central_send(uint8_t cmd) {
     int sent = 0;
 
     for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
@@ -303,13 +339,19 @@ int zmk_soft_off_plus_signal_peers(void) {
         int err = bt_gatt_write_without_response(slot->conn, slot->off_handle, &cmd, sizeof(cmd),
                                                  false);
         if (err) {
-            LOG_WRN("soft-off-plus: off write to peripheral %d failed (%d)", i, err);
+            LOG_WRN("soft-off-plus: cmd 0x%02x write to peripheral %d failed (%d)", cmd, i, err);
         } else {
             sent++;
         }
     }
 
     return sent > 0 ? 0 : -ENOTCONN;
+}
+
+int zmk_soft_off_plus_signal_peers(void) { return sop_central_send(ZMK_SOFT_OFF_PLUS_CMD_OFF); }
+
+int zmk_soft_off_plus_signal_peers_drop(void) {
+    return sop_central_send(ZMK_SOFT_OFF_PLUS_CMD_DROP);
 }
 
 #else /* split peripheral */
@@ -327,8 +369,8 @@ static ssize_t sop_write_cb(struct bt_conn *conn, const struct bt_gatt_attr *att
     ARG_UNUSED(attr);
     ARG_UNUSED(offset);
     ARG_UNUSED(flags);
-    if (len >= 1 && ((const uint8_t *)buf)[0] == ZMK_SOFT_OFF_PLUS_CMD_OFF) {
-        sop_request_local_soft_off();
+    if (len >= 1) {
+        sop_handle_cmd(((const uint8_t *)buf)[0]);
     }
     return len;
 }
@@ -340,15 +382,20 @@ BT_GATT_SERVICE_DEFINE(
                            BT_GATT_PERM_WRITE_ENCRYPT, NULL, sop_write_cb, &sop_cmd_value),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT), );
 
-int zmk_soft_off_plus_signal_peers(void) {
-    uint8_t cmd = ZMK_SOFT_OFF_PLUS_CMD_OFF;
+static int sop_peripheral_send(uint8_t cmd) {
     /* attrs[1] is the characteristic declaration; bt_gatt_notify resolves the
      * value attribute from it. */
     int err = bt_gatt_notify(NULL, &sop_svc.attrs[1], &cmd, sizeof(cmd));
     if (err) {
-        LOG_WRN("soft-off-plus: notify central failed (%d)", err);
+        LOG_WRN("soft-off-plus: notify central (cmd 0x%02x) failed (%d)", cmd, err);
     }
     return err;
+}
+
+int zmk_soft_off_plus_signal_peers(void) { return sop_peripheral_send(ZMK_SOFT_OFF_PLUS_CMD_OFF); }
+
+int zmk_soft_off_plus_signal_peers_drop(void) {
+    return sop_peripheral_send(ZMK_SOFT_OFF_PLUS_CMD_DROP);
 }
 
 #endif /* role */

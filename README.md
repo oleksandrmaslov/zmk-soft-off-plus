@@ -234,15 +234,16 @@ and `wake-gpios`/`strobe-gpios` to that one row/column.
 elapsed. `trigger-on-hold` makes it **two-phase, phone-style**: the moment
 `hold-time-ms` passes while you're still holding, the keyboard's components are
 **dropped for visual confirmation** (`zmk_pm_suspend_devices()` runs every
-device's PM suspend — ext-power/display, radio, RGB, …) — but this is a
-*display-only* drop: it does **not** power off and does **not** signal the other
-half. On the matrix path the GLOBAL relay runs the same phase 1 on both halves,
-so both screens blank. The **real System OFF *and* the cross-half off-signal are
-deferred until you release**, so the wake key's pin is inactive when the board
-sleeps. That sidesteps the nRF
-*"System OFF while DETECT is high → instant re-wake"* trap, so it's **safe on a
-key that is also the wake source**. Releasing before `hold-time-ms` cancels with
-nothing dropped.
+device's PM suspend — ext-power/display, radio, RGB, …) and the other half is
+told to drop too, so **both halves blank while you hold**, on a matrix key *and*
+on a sideband key. The half **you are holding** defers its real System OFF until
+you **release** (its key is also the wake source — powering off while it's down
+would re-wake the board). Any half with **nothing held** — the non-wired half of
+a sideband press — has no such constraint, so it just **powers off right away**
+when told; its power-off never depends on a release being relayed back across the
+link. That sidesteps the nRF *"System OFF while DETECT is high → instant
+re-wake"* trap, so it's **safe on a key that is also the wake source**. Releasing
+before `hold-time-ms` cancels with nothing dropped.
 GLOBAL locality (like ZMK's `&soft_off`): from a keymap, ZMK runs it on the
 central **and** relays it to every peripheral, so each half powers *itself* off —
 no cross-half radio handshake needed. Via a `kscan-sideband-behaviors` key it
@@ -254,11 +255,18 @@ BLE.
 > DETECT is high causes a wakeup from System OFF reset,"* so it would re-wake
 > instantly. Splitting it — suspend devices on hold (looks off), `sys_poweroff()`
 > on release (pin low, sleeps cleanly) — gives the phone-style feel while keeping
-> the wake correct. The cross-half off-signal is sent on release too, never on
-> hold: signalling on hold would make the central power off mid-hold (via the
-> peripheral's notify), and a powered-off central can no longer relay your
-> release to the peripheral — which would strand the peripheral *screen-off but
-> never actually in System OFF*, unable to wake from its own key.
+> the wake correct **for the half whose key you're holding**.
+>
+> The cross-half signal carries this distinction. On hold, each half sends the
+> other a **DROP**. A half that is *itself* holding a soft-off-plus key (either
+> half on a matrix press, or the wired half of a sideband press) treats a DROP as
+> *blank-only* and waits for its own key-release — so a matrix central is never
+> powered off mid-hold and stays alive to relay your release. A half with
+> **nothing held** treats a DROP as *power off now*: it has no wake key down to
+> re-wake it, and holding past `hold-time-ms` already committed you to off, so it
+> doesn't wait for any further release to be synchronized across the link. (An
+> **OFF** is still sent on release as a redundant backup; the one-shot claim keeps
+> a half from powering off twice.)
 >
 > Phase 1 calls `display_blanking_on()` (the same call ZMK's blank-on-idle uses)
 > for a clean panel-level blank on displays that support it (an OLED, or an LS0xx
