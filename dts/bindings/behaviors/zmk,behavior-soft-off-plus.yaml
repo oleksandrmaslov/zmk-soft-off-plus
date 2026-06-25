@@ -15,6 +15,17 @@ properties:
     type: int
     default: 0
     description: |
-      Minimum time in milliseconds the key must be held before releasing for the
-      soft-off to trigger. 0 triggers on release regardless of hold time.
+      How long the key must be held for soft-off to trigger. By default the
+      trigger happens on release once this much time has elapsed (0 = trigger on
+      release regardless of hold time). With trigger-on-hold, this is instead the
+      delay after which soft-off fires while the key is still held.
+
+  trigger-on-hold:
+    type: boolean
+    description: |
+      Fire soft-off as soon as hold-time-ms elapses while the key is still held,
+      instead of waiting for release (phone-style "hold the power button"). A
+      release before hold-time-ms cancels it. Best on a key bound directly to
+      this behavior (e.g. a dedicated/sideband power key), not wrapped in a
+      tap-dance, since a tap-dance controls its child's press/release itself.
 ...

@@ -31,10 +31,12 @@ LOG_MODULE_DECLARE(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
 
 struct behavior_soft_off_plus_config {
     uint32_t hold_time_ms;
+    bool trigger_on_hold;
 };
 
 struct behavior_soft_off_plus_data {
     uint32_t press_start;
+    struct k_work_delayable hold_work;
 };
 
 static void soft_off_plus_trigger(void) {
@@ -63,13 +65,27 @@ static void soft_off_plus_trigger(void) {
     zmk_pm_soft_off();
 }
 
+/* trigger-on-hold mode: fires once hold-time-ms elapses while the key is still
+ * held, so the board powers off mid-hold (phone-style) instead of on release. */
+static void soft_off_plus_hold_work_cb(struct k_work *work) {
+    ARG_UNUSED(work);
+    soft_off_plus_trigger();
+}
+
 static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
     ARG_UNUSED(event);
     const struct device *dev = zmk_behavior_get_binding(binding->behavior_dev);
     struct behavior_soft_off_plus_data *data = dev->data;
+    const struct behavior_soft_off_plus_config *config = dev->config;
 
-    data->press_start = k_uptime_get();
+    if (config->trigger_on_hold) {
+        /* Arm the power-off for hold-time-ms from now; released earlier cancels
+         * it. hold-time-ms == 0 fires essentially on press. */
+        k_work_schedule(&data->hold_work, K_MSEC(config->hold_time_ms));
+    } else {
+        data->press_start = k_uptime_get();
+    }
 
     return ZMK_BEHAVIOR_OPAQUE;
 }
@@ -80,6 +96,13 @@ static int on_keymap_binding_released(struct zmk_behavior_binding *binding,
     const struct device *dev = zmk_behavior_get_binding(binding->behavior_dev);
     struct behavior_soft_off_plus_data *data = dev->data;
     const struct behavior_soft_off_plus_config *config = dev->config;
+
+    if (config->trigger_on_hold) {
+        /* Released before the hold elapsed: cancel. If it already fired we are
+         * powering off anyway, so the cancel is a harmless no-op. */
+        k_work_cancel_delayable(&data->hold_work);
+        return ZMK_BEHAVIOR_OPAQUE;
+    }
 
     if (config->hold_time_ms == 0) {
         soft_off_plus_trigger();
@@ -96,6 +119,12 @@ static int on_keymap_binding_released(struct zmk_behavior_binding *binding,
     return ZMK_BEHAVIOR_OPAQUE;
 }
 
+static int behavior_soft_off_plus_init(const struct device *dev) {
+    struct behavior_soft_off_plus_data *data = dev->data;
+    k_work_init_delayable(&data->hold_work, soft_off_plus_hold_work_cb);
+    return 0;
+}
+
 static const struct behavior_driver_api behavior_soft_off_plus_driver_api = {
     .binding_pressed = on_keymap_binding_pressed,
     .binding_released = on_keymap_binding_released,
@@ -108,10 +137,11 @@ static const struct behavior_driver_api behavior_soft_off_plus_driver_api = {
 #define SOP_INST(n)                                                                                \
     static const struct behavior_soft_off_plus_config bsop_config_##n = {                          \
         .hold_time_ms = DT_INST_PROP_OR(n, hold_time_ms, 0),                                       \
+        .trigger_on_hold = DT_INST_PROP(n, trigger_on_hold),                                       \
     };                                                                                             \
     static struct behavior_soft_off_plus_data bsop_data_##n = {};                                  \
-    BEHAVIOR_DT_INST_DEFINE(n, NULL, NULL, &bsop_data_##n, &bsop_config_##n, POST_KERNEL,          \
-                            CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,                                   \
+    BEHAVIOR_DT_INST_DEFINE(n, behavior_soft_off_plus_init, NULL, &bsop_data_##n, &bsop_config_##n,\
+                            POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,                       \
                             &behavior_soft_off_plus_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(SOP_INST)

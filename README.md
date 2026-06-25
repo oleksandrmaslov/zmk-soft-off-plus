@@ -229,12 +229,17 @@ and `wake-gpios`/`strobe-gpios` to that one row/column.
 
 ## 6. Node/behavior reference
 
-**`zmk,behavior-soft-off-plus`** — `hold-time-ms` (default 0 = trigger on
-release). GLOBAL locality (like ZMK's `&soft_off`): from a keymap, ZMK runs it
-on the central **and** relays it to every peripheral, so each half powers
-*itself* off — no cross-half radio handshake needed. Via a `kscan-sideband-behaviors`
-key it bypasses locality and runs on only that half, which then signals the
-other over BLE.
+**`zmk,behavior-soft-off-plus`** — `hold-time-ms` (default 0), `trigger-on-hold`
+(boolean). By default soft-off fires **on release** once `hold-time-ms` has
+elapsed. Set `trigger-on-hold` to fire **while the key is still held**, the
+moment `hold-time-ms` passes (phone-style "hold the power button"); a release
+before then cancels it. Use `trigger-on-hold` on a key bound *directly* to the
+behavior (e.g. a dedicated/sideband power key), not inside a tap-dance.
+GLOBAL locality (like ZMK's `&soft_off`): from a keymap, ZMK runs it on the
+central **and** relays it to every peripheral, so each half powers *itself* off —
+no cross-half radio handshake needed. Via a `kscan-sideband-behaviors` key it
+bypasses locality and runs on only that half, which then signals the other over
+BLE.
 
 **`zmk,soft-off-plus-wake`** — `wake-gpios` (required, the input(s) to poll),
 `strobe-gpios` (optional outputs to drive for a matrix key), `wake-hold-ms`
