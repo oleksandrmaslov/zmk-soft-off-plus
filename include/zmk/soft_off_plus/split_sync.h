@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Opcode exchanged between halves to request a synchronized soft off. */
@@ -18,3 +19,9 @@
  * Returns 0 on success or a negative errno on failure.
  */
 int zmk_soft_off_plus_signal_peers(void);
+
+/* Claim the one-shot power-off for this half. Returns true for the first caller
+ * (which should proceed to power off) and false for any later caller, so the
+ * keymap-relayed behavior and the cross-half off-signal never power a half off
+ * twice. */
+bool zmk_soft_off_plus_claim_off(void);

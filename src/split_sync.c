@@ -40,6 +40,9 @@ int zmk_soft_off_plus_signal_peers(void) { return 0; }
 /* Defer the power-off so it never runs in a BLE RX callback context. */
 static void sop_soft_off_work_cb(struct k_work *work) {
     ARG_UNUSED(work);
+    if (!zmk_soft_off_plus_claim_off()) {
+        return; /* this half is already powering off (e.g. its own keymap run) */
+    }
     LOG_INF("soft-off-plus: peer requested simultaneous off");
     zmk_pm_soft_off();
 }
@@ -145,7 +148,9 @@ static uint8_t sop_chrc_discovery_cb(struct bt_conn *conn, const struct bt_gatt_
     slot->subscribe_params.value_handle = slot->off_handle;
     slot->subscribe_params.notify = sop_notify_cb;
     slot->subscribe_params.value = BT_GATT_CCC_NOTIFY;
-    atomic_set(slot->subscribe_params.flags, BT_GATT_SUBSCRIBE_FLAG_NO_RESUB);
+    /* flags is an atomic bit array; set the bit, don't overwrite it with the
+     * enum's value (which would set BT_GATT_SUBSCRIBE_FLAG_VOLATILE instead). */
+    atomic_set_bit(slot->subscribe_params.flags, BT_GATT_SUBSCRIBE_FLAG_NO_RESUB);
 
     /* The notify subscription is only used by the peripheral->central direction
      * (sideband power key). Failing it does not stop the central->peripheral

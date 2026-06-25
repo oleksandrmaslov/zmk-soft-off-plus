@@ -5,7 +5,7 @@ devicetree-gated features that build on ZMK's built-in soft off:
 
 | Feature | What it does | Kconfig | Devicetree |
 | --- | --- | --- | --- |
-| **Enhanced soft off** | `&soft_off_plus` behavior; on a split, pressing it on **either** half powers off **both** over BLE | `ZMK_SOFT_OFF_PLUS_BEHAVIOR`, `…_SPLIT_SYNC` | `zmk,behavior-soft-off-plus` |
+| **Enhanced soft off** | `&soft_off_plus` behavior; on a split, pressing it on **either** half powers off **both** | `ZMK_SOFT_OFF_PLUS_BEHAVIOR`, `…_SPLIT_SYNC` | `zmk,behavior-soft-off-plus` |
 | **Hold-to-wake** | After soft off, the wake key must be **held** for a set time or the board drops straight back to deep sleep (saves battery on accidental presses) | `ZMK_SOFT_OFF_PLUS_WAKE_DELAY` | `zmk,soft-off-plus-wake` |
 | **USB-gated wrapper** | `zmk,behavior-if-usb` runs a child behavior only while USB is connected — e.g. put `&bootloader` on the power key so DFU only works on the plugged-in half | `ZMK_SOFT_OFF_PLUS_IF_USB` | `zmk,behavior-if-usb` |
 
@@ -194,8 +194,11 @@ and `wake-gpios`/`strobe-gpios` to that one row/column.
 ## 6. Node/behavior reference
 
 **`zmk,behavior-soft-off-plus`** — `hold-time-ms` (default 0 = trigger on
-release). Central locality: from a keymap it runs on the central; via a sideband
-key it runs on whichever half, which then signals the other.
+release). GLOBAL locality (like ZMK's `&soft_off`): from a keymap, ZMK runs it
+on the central **and** relays it to every peripheral, so each half powers
+*itself* off — no cross-half radio handshake needed. Via a `kscan-sideband-behaviors`
+key it bypasses locality and runs on only that half, which then signals the
+other over BLE.
 
 **`zmk,soft-off-plus-wake`** — `wake-gpios` (required, the input(s) to poll),
 `strobe-gpios` (optional outputs to drive for a matrix key), `wake-hold-ms`
@@ -212,7 +215,17 @@ powered). `#binding-cells = <0>`.
 
 ## 7. How "both halves off" works
 
-A dedicated GATT service carries a one-byte off command between halves: the
-central writes it to each peripheral, a peripheral notifies the central; the
-receiver powers off from a work item. Off-together is supported; wake-together
-is not (a half in System OFF can't receive BLE) — wake each half with its own key.
+From a keymap, the behavior uses **GLOBAL locality** (like ZMK's built-in
+`&soft_off`): ZMK runs it on the central and relays it to every peripheral, so
+each half runs the behavior and powers *itself* off. This is the reliable path
+and needs no cross-half radio handshake.
+
+For a dedicated power key wired through `kscan-sideband-behaviors`, the behavior
+runs on only the half it is wired to, so a small GATT service carries a one-byte
+off command to the other half (the central writes it to each peripheral; a
+peripheral notifies the central) and the receiver powers off from a work item. A
+one-shot guard keeps the relayed run and this signal from powering a half off
+twice.
+
+Off-together is supported; wake-together is not (a half in System OFF can't
+receive BLE) — wake each half with its own key.
