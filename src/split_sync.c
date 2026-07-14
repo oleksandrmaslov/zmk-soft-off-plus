@@ -45,15 +45,17 @@ static void sop_soft_off_work_cb(struct k_work *work) {
         return; /* this half is already powering off (e.g. its own keymap run) */
     }
     LOG_INF("soft-off-plus: peer requested simultaneous off");
-    zmk_pm_soft_off();
+    int err = zmk_pm_soft_off();
+    LOG_ERR("soft-off-plus: peer System OFF returned unexpectedly (%d)", err);
+    zmk_soft_off_plus_release_off_claim();
 }
 static K_WORK_DEFINE(sop_soft_off_work, sop_soft_off_work_cb);
 
 /* DROP requested by a peer (trigger-on-hold phase 1 on the other half).
  *
  * If this half is holding its own soft-off-plus key (matrix relay, or the
- * sideband half the key is wired to), only blank -- it powers off on its own
- * release, because the held key is also its wake source. If nothing is held
+ * sideband half the key is wired to), only request display blanking -- it powers
+ * off on its own release, because the held key is also its wake source. If nothing is held
  * here (a passive receiver, e.g. the non-wired half of a sideband press), the
  * user has already committed to power-off by holding past hold-time and there is
  * no held wake source to re-wake us, so just power off now -- no need to wait for
@@ -61,13 +63,15 @@ static K_WORK_DEFINE(sop_soft_off_work, sop_soft_off_work_cb);
 static void sop_drop_work_cb(struct k_work *work) {
     ARG_UNUSED(work);
     if (zmk_soft_off_plus_hold_active()) {
-        LOG_INF("soft-off-plus: peer DROP; own key held, blank only");
+        LOG_INF("soft-off-plus: peer DROP; own key held, waiting for release");
         zmk_soft_off_plus_drop_components();
         return;
     }
     if (zmk_soft_off_plus_claim_off()) {
         LOG_INF("soft-off-plus: peer DROP; nothing held here, powering off");
-        zmk_pm_soft_off();
+        int err = zmk_pm_soft_off();
+        LOG_ERR("soft-off-plus: peer DROP System OFF returned unexpectedly (%d)", err);
+        zmk_soft_off_plus_release_off_claim();
     }
 }
 static K_WORK_DEFINE(sop_drop_work, sop_drop_work_cb);

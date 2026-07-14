@@ -56,12 +56,20 @@ static void power_button_reset(struct behavior_power_button_data *data) {
 
 static int power_button_invoke(const struct behavior_power_button_config *config, size_t index,
                                struct zmk_behavior_binding_event event, bool pressed) {
+    /* kscan-sideband-behaviors invokes this wrapper directly on the physical
+     * half, bypassing ZMK's locality dispatcher. Keep the selected child on
+     * that same half too. Calling zmk_behavior_invoke_binding() here would
+     * re-enter locality dispatch; a GLOBAL child such as &soft_off_plus would
+     * then create a false held-key state on the other half. */
+    struct zmk_behavior_binding child = config->bindings[index];
+
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
-    /* The sideband driver invokes this behavior on the physical half. Preserve
-     * that locality when invoking the selected child, including &bootloader. */
+    /* Preserve physical-half source semantics for nested EVENT_SOURCE
+     * behaviors, including &if_usb -> &bootloader. */
     event.source = ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL;
 #endif
-    return zmk_behavior_invoke_binding(&config->bindings[index], event, pressed);
+    return pressed ? behavior_keymap_binding_pressed(&child, event)
+                   : behavior_keymap_binding_released(&child, event);
 }
 
 static void power_button_decision_work_cb(struct k_work *work) {

@@ -9,10 +9,9 @@
 
 /* Opcodes exchanged between halves.
  *  OFF  - power off now (claim + zmk_pm_soft_off).
- *  DROP - drop components for visual confirmation only (suspend devices / blank),
- *         WITHOUT powering off. Used by trigger-on-hold phase 1 so a sideband
- *         press blanks both halves while held; safe for a matrix central because
- *         it does not power off, so the central can still relay the key-release. */
+ *  DROP - request phase-1 visual confirmation WITHOUT powering off the half
+ *         whose own wake key is held. Used by trigger-on-hold so that half can
+ *         still observe release; a passive peer enters System OFF immediately. */
 #define ZMK_SOFT_OFF_PLUS_CMD_OFF 0x01
 #define ZMK_SOFT_OFF_PLUS_CMD_DROP 0x02
 
@@ -26,16 +25,14 @@
  */
 int zmk_soft_off_plus_signal_peers(void);
 
-/* Signal the other half/halves to DROP components for visual confirmation
- * (CMD_DROP): suspend devices / blank the display WITHOUT powering off. Same
- * transport as zmk_soft_off_plus_signal_peers(); no-op returning 0 when split
- * sync is disabled or this is not a split build. */
+/* Signal the other half/halves to perform trigger-on-hold phase 1 (CMD_DROP).
+ * Same transport as zmk_soft_off_plus_signal_peers(); no-op returning 0 when
+ * split sync is disabled or this is not a split build. */
 int zmk_soft_off_plus_signal_peers_drop(void);
 
-/* The universal "looks off" used by trigger-on-hold phase 1 and by an incoming
- * cross-half DROP: blank the display and run every device's PM suspend
- * (ext-power -> display VCC cut, radio, RGB, ...) WITHOUT powering off. Wakeup
- * devices (kscan) and the BLE link stay up. Always available. */
+/* Visual confirmation used by trigger-on-hold phase 1 and an incoming DROP.
+ * It only requests panel blanking; device PM and external rails stay intact
+ * until final System OFF so input/release and display drivers remain valid. */
 void zmk_soft_off_plus_drop_components(void);
 
 /* Track whether THIS half currently has a soft-off-plus key held via its own
@@ -54,3 +51,7 @@ bool zmk_soft_off_plus_hold_active(void);
  * keymap-relayed behavior and the cross-half off-signal never power a half off
  * twice. */
 bool zmk_soft_off_plus_claim_off(void);
+
+/* Release a claimed attempt if zmk_pm_soft_off() unexpectedly returns, allowing
+ * a later gesture or peer command to retry instead of wedging until reset. */
+void zmk_soft_off_plus_release_off_claim(void);

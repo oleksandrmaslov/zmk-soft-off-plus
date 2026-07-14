@@ -113,7 +113,7 @@ is plugged into USB**; hold to wake.
             compatible = "zmk,behavior-soft-off-plus";
             #binding-cells = <0>;
             hold-time-ms = <2700>;        /* + 300 ms gesture decision = ~3 s physical hold */
-            trigger-on-hold;              /* blank at hold; enter System OFF on release */
+            trigger-on-hold;              /* request blank at hold; System OFF on release */
         };
 
         /* &bootloader, but only while THIS half is on USB */
@@ -242,11 +242,9 @@ and `wake-gpios`/`strobe-gpios` to that one row/column.
 **`zmk,behavior-soft-off-plus`** — `hold-time-ms` (default 0), `trigger-on-hold`
 (boolean). By default soft-off fires **on release** once `hold-time-ms` has
 elapsed. `trigger-on-hold` makes it **two-phase, phone-style**: the moment
-`hold-time-ms` passes while you're still holding, the keyboard's components are
-**dropped for visual confirmation** (`zmk_pm_suspend_devices()` runs every
-device's PM suspend — ext-power/display, radio, RGB, …) and the other half is
-told to drop too, so **both halves blank while you hold**, on a matrix key *and*
-on a sideband key. The half **you are holding** defers its real System OFF until
+`hold-time-ms` passes while you're still holding, the keyboard requests display
+blanking for visual confirmation and tells the other half to drop too. The half
+**you are holding** defers its real System OFF until
 you **release** (its key is also the wake source — powering off while it's down
 would re-wake the board). Any half with **nothing held** — the non-wired half of
 a sideband press — has no such constraint, so it just **powers off right away**
@@ -263,8 +261,8 @@ BLE.
 > **Why two-phase?** Powering off *while the key is held* can't work for a key
 > that also wakes the board: on nRF *"setting the system to System OFF while
 > DETECT is high causes a wakeup from System OFF reset,"* so it would re-wake
-> instantly. Splitting it — suspend devices on hold (looks off), `sys_poweroff()`
-> on release (pin low, sleeps cleanly) — gives the phone-style feel while keeping
+> instantly. Splitting it — request display blanking on hold, `sys_poweroff()` on
+> release (pin low, sleeps cleanly) — gives the phone-style feel while keeping
 > the wake correct **for the half whose key you're holding**.
 >
 > The cross-half signal carries this distinction. On hold, each half sends the
@@ -280,12 +278,12 @@ BLE.
 >
 > Phase 1 calls `display_blanking_on()` (the same call ZMK's blank-on-idle uses)
 > for a clean panel-level blank on displays that support it (an OLED, or an LS0xx
-> wired with `disp-en-gpios`). On a **bare nice_view it's a no-op** — but the
-> screen still goes blank, because phase 1 also suspends `ext_power` and cuts the
-> panel's VCC. A Sharp memory LCD holds its image only *while powered* (no refresh
-> needed, but VCC required); remove VCC and the per-pixel memory loses it and it
-> blanks. So the nice_view blanks the same way it does on a normal ZMK soft-off —
-> by losing power, not by a blank command.
+> wired with `disp-en-gpios`). On a **bare nice_view it is a no-op**, so the held
+> half remains visible until release. Phase 1 deliberately does not suspend the
+> SPI/display graph or cut `ext_power`: doing so while the release path and LS0xx
+> VCOM thread are still running can strand the input path, drive an unpowered
+> panel, and persist the external rail's OFF state into settings. Final System
+> OFF performs the real device suspend and rail removal immediately before sleep.
 
 **`zmk,soft-off-plus-wake`** — `wake-gpios` (required, the input(s) to poll),
 `strobe-gpios` (optional outputs to drive for a matrix key), `wake-hold-ms`

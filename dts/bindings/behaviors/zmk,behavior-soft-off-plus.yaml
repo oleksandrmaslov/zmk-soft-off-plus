@@ -24,10 +24,10 @@ properties:
     type: boolean
     description: |
       Two-phase, phone-style power-off. When hold-time-ms elapses while the key
-      is still held, the keyboard's components are dropped for visual
-      confirmation -- every device's PM suspend runs (ext-power/display, radio,
-      RGB, and anything added later) and the other split half is told to DROP
-      too, so both halves blank while held on a matrix key or a sideband key.
+      is still held, display blanking is requested for visual confirmation and
+      the other split half is told to DROP too. Devices and external power rails
+      remain active until final System OFF so the held half can safely observe
+      release and no transient OFF state is persisted by an ext-power driver.
       The half whose key is held defers its real System OFF until RELEASE, so the
       wake key's GPIO is inactive when it sleeps (this avoids the nRF trap where
       "setting the system to System OFF while DETECT is high causes a wakeup from
