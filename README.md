@@ -108,11 +108,11 @@ is plugged into USB**; hold to wake.
         hw_soft_off: hw_soft_off {
             compatible = "zmk,behavior-soft-off-plus";
             #binding-cells = <0>;
-            hold-time-ms = <3000>;        /* hold this long to power off */
+            hold-time-ms = <2700>;        /* + 300 ms tap-dance = ~3 s physical hold */
         };
 
         /* &bootloader, but only while THIS half is on USB */
-        if_usb_bootloader: if_usb_bootloader {
+        if_usb_dfu: if_usb_dfu {
             compatible = "zmk,behavior-if-usb";
             #binding-cells = <0>;
             bindings = <&bootloader>;
@@ -123,7 +123,7 @@ is plugged into USB**; hold to wake.
             compatible = "zmk,behavior-tap-dance";
             #binding-cells = <0>;
             tapping-term-ms = <300>;
-            bindings = <&hw_soft_off>, <&none>, <&if_usb_bootloader>;
+            bindings = <&hw_soft_off>, <&none>, <&if_usb_dfu>;
         };
     };
 
@@ -167,7 +167,10 @@ nodes above (assuming `CONFIG_ZMK_PM_SOFT_OFF=y`).
 
 > The `if-usb` wrapper is only "active" where you bind it — here, on the
 > dedicated power key's tap-dance. It is not compiled at all unless a
-> `zmk,behavior-if-usb` node exists, and each half checks **its own** USB.
+> `zmk,behavior-if-usb` node exists. A sideband tap-dance executes on the
+> physical half that owns the button, so that half checks **its own** USB/VBUS
+> and runs `&bootloader` locally. Nordic split peripherals read VBUS directly
+> because ZMK's USB stack is central-only.
 
 ## 5. Recipe B — keymap soft off + any-key wake (e.g. corne)
 
