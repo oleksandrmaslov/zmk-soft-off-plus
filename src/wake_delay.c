@@ -138,21 +138,12 @@ static int wake_delay_init(void) {
     }
     /* Clear so a later non-wake reset isn't mistaken for a soft-off wake. */
     hwinfo_clear_reset_cause();
+    LOG_DBG("soft-off-plus: reset cause 0x%08x", cause);
 
     if (!(cause & RESET_LOW_POWER_WAKE)) {
         LOG_DBG("soft-off-plus: not a soft-off wake (cause 0x%08x); continuing", cause);
         return 0;
     }
-
-    if (wake_usb_bypass()) {
-        LOG_INF("soft-off-plus: USB present; bypassing wake hold");
-        return 0;
-    }
-
-    /* Committed to a hold check on battery: keep external peripherals (e.g. the
-     * display) dark until the wake is confirmed, so a too-short press cannot
-     * power them. */
-    wake_force_ext_power_off();
 
     for (size_t i = 0; i < NUM_WAKE_GPIOS; i++) {
         if (!gpio_is_ready_dt(&wake_gpios[i])) {
@@ -167,8 +158,29 @@ static int wake_delay_init(void) {
 
     if (!wake_any_active()) {
         LOG_INF("soft-off-plus: wake key not held at boot");
+        wake_force_ext_power_off();
         wake_return_to_off();
     }
+
+    /* USB bypass means that an actually held wake key need not remain down for
+     * the full wake-hold-ms. It must not bypass the key check itself: otherwise
+     * any spurious low-power reset on a USB-powered passive split half becomes
+     * a complete reboot immediately after the peer asks it to power off. */
+    if (wake_usb_bypass()) {
+        k_msleep(20); /* reject a release edge or switch bounce around reset */
+        if (!wake_any_active()) {
+            LOG_INF("soft-off-plus: USB wake key released during debounce");
+            wake_force_ext_power_off();
+            wake_return_to_off();
+        }
+        LOG_INF("soft-off-plus: USB present and wake key active; bypassing wake hold");
+        return 0;
+    }
+
+    /* Committed to a hold check on battery: keep external peripherals (e.g. the
+     * display) dark until the wake is confirmed, so a too-short press cannot
+     * power them. */
+    wake_force_ext_power_off();
 
     if (WAKE_HOLD_MS == 0) {
         return 0;

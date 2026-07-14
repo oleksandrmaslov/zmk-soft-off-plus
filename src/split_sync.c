@@ -47,6 +47,7 @@ static void sop_soft_off_work_cb(struct k_work *work) {
     LOG_INF("soft-off-plus: peer requested simultaneous off");
     int err = zmk_pm_soft_off();
     LOG_ERR("soft-off-plus: peer System OFF returned unexpectedly (%d)", err);
+    zmk_soft_off_plus_recover_from_failed_off();
     zmk_soft_off_plus_release_off_claim();
 }
 static K_WORK_DEFINE(sop_soft_off_work, sop_soft_off_work_cb);
@@ -71,6 +72,7 @@ static void sop_drop_work_cb(struct k_work *work) {
         LOG_INF("soft-off-plus: peer DROP; nothing held here, powering off");
         int err = zmk_pm_soft_off();
         LOG_ERR("soft-off-plus: peer DROP System OFF returned unexpectedly (%d)", err);
+        zmk_soft_off_plus_recover_from_failed_off();
         zmk_soft_off_plus_release_off_claim();
     }
 }

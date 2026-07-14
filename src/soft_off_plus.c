@@ -7,14 +7,25 @@
  * off-signal, so any subset of features can be enabled.
  */
 
+#include <errno.h>
+
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/pm/device.h>
 #include <zephyr/sys/atomic.h>
 
 #include <zmk/soft_off_plus/split_sync.h>
 
-#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && DT_HAS_CHOSEN(zephyr_display)
+#define SOP_EXT_POWER_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(zmk_ext_power_generic)
+#if DT_NODE_HAS_STATUS(SOP_EXT_POWER_NODE, okay)
+#include <drivers/ext_power.h>
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && IS_ENABLED(CONFIG_LVGL) &&                                \
+    DT_HAS_CHOSEN(zephyr_display)
 #include <zephyr/drivers/display.h>
+#include <lvgl.h>
+#include <zmk/display.h>
 #endif
 
 LOG_MODULE_REGISTER(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
@@ -45,14 +56,95 @@ void zmk_soft_off_plus_hold_end(void) {
 
 bool zmk_soft_off_plus_hold_active(void) { return atomic_get(&sop_hold_count) > 0; }
 
-static void sop_blank_display(void) {
-#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && DT_HAS_CHOSEN(zephyr_display)
+/* A bare nice!view has no DISP pin, so the LS0xx driver's blanking API returns
+ * -ENOTSUP. Keep the panel powered (and therefore keep VCOM valid), then cover
+ * the active LVGL screen with an opaque white object and force one refresh.
+ * Running this on ZMK's display queue avoids racing LVGL's regular updates. */
+#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && IS_ENABLED(CONFIG_LVGL) &&                                \
+    DT_HAS_CHOSEN(zephyr_display)
+static lv_obj_t *sop_blank_overlay;
+
+static void sop_restore_display_work_cb(struct k_work *work) {
+    ARG_UNUSED(work);
+
     const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
     if (device_is_ready(disp)) {
-        /* The same call ZMK uses for blank-on-idle: a clean panel-level blank for
-         * displays that support it (an OLED's display-off, or an LS0xx with
-         * disp-en-gpios). It safely returns -ENOTSUP on a bare nice!view. */
-        display_blanking_on(disp);
+        display_blanking_off(disp);
+    }
+
+    if (sop_blank_overlay == NULL) {
+        return;
+    }
+
+    lv_obj_add_flag(sop_blank_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_invalidate(lv_scr_act());
+    lv_refr_now(NULL);
+}
+K_WORK_DEFINE(sop_restore_display_work, sop_restore_display_work_cb);
+
+static void sop_blank_display_work_cb(struct k_work *work) {
+    ARG_UNUSED(work);
+
+    const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+    if (!device_is_ready(disp)) {
+        LOG_WRN("soft-off-plus: display is not ready for phase-1 blank");
+        return;
+    }
+
+    int err = display_blanking_on(disp);
+    if (err == 0) {
+        return;
+    }
+    if (err != -ENOTSUP) {
+        LOG_WRN("soft-off-plus: display blanking failed (%d); using LVGL fallback", err);
+    }
+
+    if (!zmk_display_is_initialized()) {
+        LOG_WRN("soft-off-plus: display UI is not initialized for phase-1 blank");
+        return;
+    }
+
+    lv_obj_t *screen = lv_scr_act();
+    if (screen == NULL) {
+        LOG_WRN("soft-off-plus: no active LVGL screen for phase-1 blank");
+        return;
+    }
+
+    if (sop_blank_overlay == NULL) {
+        sop_blank_overlay = lv_obj_create(screen);
+        lv_obj_remove_style_all(sop_blank_overlay);
+        lv_obj_set_pos(sop_blank_overlay, 0, 0);
+        lv_obj_set_size(sop_blank_overlay, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_color(sop_blank_overlay, lv_color_white(), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(sop_blank_overlay, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_clear_flag(sop_blank_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    } else {
+        lv_obj_clear_flag(sop_blank_overlay, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lv_obj_move_foreground(sop_blank_overlay);
+    lv_obj_invalidate(sop_blank_overlay);
+    lv_refr_now(NULL);
+}
+K_WORK_DEFINE(sop_blank_display_work, sop_blank_display_work_cb);
+#endif
+
+static void sop_blank_display(void) {
+#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && IS_ENABLED(CONFIG_LVGL) &&                                \
+    DT_HAS_CHOSEN(zephyr_display)
+    int err = k_work_submit_to_queue(zmk_display_work_q(), &sop_blank_display_work);
+    if (err < 0) {
+        LOG_WRN("soft-off-plus: phase-1 display work submit failed (%d)", err);
+    }
+#endif
+}
+
+static void sop_restore_display(void) {
+#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && IS_ENABLED(CONFIG_LVGL) &&                                \
+    DT_HAS_CHOSEN(zephyr_display)
+    int err = k_work_submit_to_queue(zmk_display_work_q(), &sop_restore_display_work);
+    if (err < 0) {
+        LOG_WRN("soft-off-plus: display restore work submit failed (%d)", err);
     }
 #endif
 }
@@ -61,7 +153,52 @@ void zmk_soft_off_plus_drop_components(void) {
     /* Phase 1 is only a visual confirmation. Do not suspend the device graph or
      * cut an external display rail while input/BLE remain alive: EXT_POWER PM
      * suspend can persist OFF into settings, and an LS0xx VCOM thread would keep
-     * driving an unpowered panel. Displays with a real blanking control blank
-     * here; a bare nice!view stays powered until final System OFF on release. */
+     * driving an unpowered panel. */
     sop_blank_display();
+}
+
+void zmk_soft_off_plus_recover_from_failed_off(void) {
+#if IS_ENABLED(CONFIG_PM_DEVICE)
+    const struct device *devs;
+    size_t devc = z_device_get_all_static(&devs);
+
+    /* zmk_pm_soft_off() disables existing wake flags and suspends all devices
+     * before its final checked suspend pass. If that pass fails, its built-in
+     * rollback only knows about devices from the checked pass. Resume the whole
+     * graph in dependency order and restore all capable wake sources. */
+    for (const struct device *dev = devs; dev < devs + devc; dev++) {
+        if (!device_is_ready(dev)) {
+            continue;
+        }
+
+        if (pm_device_wakeup_is_capable(dev)) {
+            pm_device_wakeup_enable(dev, true);
+        }
+
+        int err = pm_device_action_run(dev, PM_DEVICE_ACTION_RESUME);
+        if (err < 0 && err != -EALREADY && err != -ENOSYS && err != -ENOTSUP) {
+            LOG_WRN("soft-off-plus: failed to resume %s after aborted off (%d)", dev->name, err);
+        }
+    }
+#endif
+
+#if DT_NODE_HAS_STATUS(SOP_EXT_POWER_NODE, okay)
+    /* EXT_POWER's suspend callback schedules its false state for persistence.
+     * Enabling it immediately replaces that delayed save with true as well as
+     * restoring the display rail. */
+    const struct device *ext_power = DEVICE_DT_GET(SOP_EXT_POWER_NODE);
+    if (device_is_ready(ext_power)) {
+        int err = ext_power_enable(ext_power);
+        if (err < 0) {
+            LOG_WRN("soft-off-plus: failed to restore external power (%d)", err);
+        }
+
+        uint32_t settle_ms = DT_PROP_OR(SOP_EXT_POWER_NODE, init_delay_ms, 0);
+        if (settle_ms > 0) {
+            k_msleep(settle_ms);
+        }
+    }
+#endif
+
+    sop_restore_display();
 }

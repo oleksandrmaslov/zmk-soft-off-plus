@@ -74,6 +74,7 @@ static void soft_off_plus_trigger(void) {
 
     int err = zmk_pm_soft_off();
     LOG_ERR("soft-off-plus: System OFF returned unexpectedly (%d)", err);
+    zmk_soft_off_plus_recover_from_failed_off();
     zmk_soft_off_plus_release_off_claim();
 }
 

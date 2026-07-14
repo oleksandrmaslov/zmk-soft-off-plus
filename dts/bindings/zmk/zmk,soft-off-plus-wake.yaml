@@ -31,5 +31,8 @@ properties:
 
   bypass-on-usb:
     type: boolean
-    description: Skip the hold requirement when USB power is present.
+    description: |
+      Skip the long hold requirement when USB power is present, after first
+      confirming that a wake input is currently active. An inactive/spurious
+      System OFF wake still returns immediately to System OFF.
 ...

@@ -278,16 +278,20 @@ BLE.
 >
 > Phase 1 calls `display_blanking_on()` (the same call ZMK's blank-on-idle uses)
 > for a clean panel-level blank on displays that support it (an OLED, or an LS0xx
-> wired with `disp-en-gpios`). On a **bare nice_view it is a no-op**, so the held
-> half remains visible until release. Phase 1 deliberately does not suspend the
-> SPI/display graph or cut `ext_power`: doing so while the release path and LS0xx
-> VCOM thread are still running can strand the input path, drive an unpowered
-> panel, and persist the external rail's OFF state into settings. Final System
-> OFF performs the real device suspend and rail removal immediately before sleep.
+> wired with `disp-en-gpios`). A **bare nice!view** has no DISP pin, so the module
+> falls back to an opaque white LVGL overlay and refreshes it on ZMK's display
+> queue. Phase 1 deliberately does not suspend the SPI/display graph or cut
+> `ext_power`: doing so while the release path and LS0xx VCOM thread are still
+> running can strand the input path, drive an unpowered panel, and persist the
+> external rail's OFF state into settings. Final System OFF performs the real
+> device suspend and rail removal immediately before sleep. If that PM sequence
+> returns with an error, the module resumes the device graph and restores
+> external power instead of leaving the display rail off.
 
 **`zmk,soft-off-plus-wake`** — `wake-gpios` (required, the input(s) to poll),
 `strobe-gpios` (optional outputs to drive for a matrix key), `wake-hold-ms`
-(default 1000), `bypass-on-usb` (skip the hold while on USB). For a matrix wake
+(default 1000), `bypass-on-usb` (after confirming the wake input is active, skip
+the remaining hold while on USB). For a matrix wake
 key, `wake-gpios` is the key's **row** (sense) line and `strobe-gpios` is its
 **column** (drive) line — they must match the row/column GPIOs of that exact
 key in your kscan, or the key can't be sensed at wake. While the hold check is

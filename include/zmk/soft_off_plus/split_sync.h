@@ -55,3 +55,8 @@ bool zmk_soft_off_plus_claim_off(void);
 /* Release a claimed attempt if zmk_pm_soft_off() unexpectedly returns, allowing
  * a later gesture or peer command to retry instead of wedging until reset. */
 void zmk_soft_off_plus_release_off_claim(void);
+
+/* zmk_pm_soft_off() normally never returns. If device suspension fails, restore
+ * the device graph, wake flags, external-power state, and phase-1 display so the
+ * keyboard remains usable and EXT_POWER=off is not persisted in settings. */
+void zmk_soft_off_plus_recover_from_failed_off(void);
