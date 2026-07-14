@@ -105,10 +105,13 @@ is plugged into USB**; hold to wake.
     };
 
     behaviors {
-        hw_soft_off: hw_soft_off {
+        /* Keep the node name <= 8 characters: ZMK's split behavior relay has
+         * an 8-character device-name payload. The phandle label may be longer. */
+        hw_soft_off: sop {
             compatible = "zmk,behavior-soft-off-plus";
             #binding-cells = <0>;
             hold-time-ms = <2700>;        /* + 300 ms tap-dance = ~3 s physical hold */
+            trigger-on-hold;              /* blank at hold; enter System OFF on release */
         };
 
         /* &bootloader, but only while THIS half is on USB */

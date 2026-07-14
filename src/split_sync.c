@@ -107,6 +107,8 @@ struct sop_peripheral_slot {
     struct bt_conn *conn;
     uint16_t off_handle;
     bool discovering;
+    bool subscribing;
+    bool subscribed;
     struct bt_gatt_discover_params discover_params;
     struct bt_gatt_discover_params sub_discover_params;
     struct bt_gatt_subscribe_params subscribe_params;
@@ -124,6 +126,10 @@ static K_WORK_DELAYABLE_DEFINE(sop_discover_work, sop_discover_work_cb);
 #define SOP_DISCOVER_RETRY_MS 500
 
 static struct sop_peripheral_slot *sop_slot_for_conn(struct bt_conn *conn) {
+    if (!conn) {
+        return NULL;
+    }
+
     for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
         if (peripherals[i].conn == conn) {
             return &peripherals[i];
@@ -138,6 +144,8 @@ static struct sop_peripheral_slot *sop_reserve_slot(struct bt_conn *conn) {
             peripherals[i].conn = conn;
             peripherals[i].off_handle = 0;
             peripherals[i].discovering = false;
+            peripherals[i].subscribing = false;
+            peripherals[i].subscribed = false;
             return &peripherals[i];
         }
     }
@@ -146,15 +154,71 @@ static struct sop_peripheral_slot *sop_reserve_slot(struct bt_conn *conn) {
 
 static uint8_t sop_notify_cb(struct bt_conn *conn, struct bt_gatt_subscribe_params *params,
                              const void *data, uint16_t length) {
-    ARG_UNUSED(conn);
     if (!data) {
-        params->value_handle = 0U;
+        struct sop_peripheral_slot *slot = sop_slot_for_conn(conn);
+        if (slot) {
+            slot->subscribing = false;
+            slot->subscribed = false;
+            /* A NULL notification means that the subscription was removed or
+             * its CCC could not be discovered. Keep the value handle for the
+             * central->peripheral write path, but rediscover the CCC and retry
+             * the peripheral->central notification path. */
+            params->ccc_handle = 0U;
+            params->value_handle = slot->off_handle;
+            params->value = BT_GATT_CCC_NOTIFY;
+            k_work_reschedule(&sop_discover_work, K_MSEC(SOP_DISCOVER_RETRY_MS));
+        }
         return BT_GATT_ITER_STOP;
     }
     if (length >= 1) {
         sop_handle_cmd(((const uint8_t *)data)[0]);
     }
     return BT_GATT_ITER_CONTINUE;
+}
+
+static void sop_subscribe_cb(struct bt_conn *conn, uint8_t err,
+                             struct bt_gatt_subscribe_params *params) {
+    ARG_UNUSED(params);
+    struct sop_peripheral_slot *slot = sop_slot_for_conn(conn);
+    if (!slot) {
+        return;
+    }
+
+    slot->subscribing = false;
+    slot->subscribed = (err == 0U);
+    if (err) {
+        LOG_WRN("soft-off-plus: subscribe response failed (ATT 0x%02x); retrying", err);
+        k_work_reschedule(&sop_discover_work, K_MSEC(SOP_DISCOVER_RETRY_MS));
+    } else {
+        LOG_DBG("soft-off-plus: peripheral notification subscription ready");
+    }
+}
+
+static void sop_begin_subscription(struct sop_peripheral_slot *slot) {
+    slot->subscribe_params.disc_params = &slot->sub_discover_params;
+    slot->subscribe_params.end_handle = slot->discover_params.end_handle;
+    slot->subscribe_params.value_handle = slot->off_handle;
+    slot->subscribe_params.notify = sop_notify_cb;
+    slot->subscribe_params.subscribe = sop_subscribe_cb;
+    slot->subscribe_params.value = BT_GATT_CCC_NOTIFY;
+
+    /* Re-establish the CCC on every split reconnection. This prevents stale
+     * client subscription state from making a peripheral notification appear
+     * ready when the server no longer has notifications enabled. */
+    atomic_set_bit(slot->subscribe_params.flags, BT_GATT_SUBSCRIBE_FLAG_VOLATILE);
+    atomic_clear_bit(slot->subscribe_params.flags, BT_GATT_SUBSCRIBE_FLAG_NO_RESUB);
+
+    slot->subscribing = true;
+    int err = bt_gatt_subscribe(slot->conn, &slot->subscribe_params);
+    if (err == -EALREADY) {
+        /* The same live subscription is already registered. */
+        slot->subscribing = false;
+        slot->subscribed = true;
+    } else if (err) {
+        slot->subscribing = false;
+        slot->subscribed = false;
+        LOG_WRN("soft-off-plus: subscribe failed (%d); retrying", err);
+    }
 }
 
 static uint8_t sop_chrc_discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -179,26 +243,11 @@ static uint8_t sop_chrc_discovery_cb(struct bt_conn *conn, const struct bt_gatt_
 
     slot->off_handle = bt_gatt_attr_value_handle(attr);
     slot->discovering = false;
+    slot->subscribed = false;
 
-    slot->subscribe_params.disc_params = &slot->sub_discover_params;
-    slot->subscribe_params.end_handle = slot->discover_params.end_handle;
-    slot->subscribe_params.value_handle = slot->off_handle;
-    slot->subscribe_params.notify = sop_notify_cb;
-    slot->subscribe_params.value = BT_GATT_CCC_NOTIFY;
-    /* flags is an atomic bit array; set the bit, don't overwrite it with the
-     * enum's value (which would set BT_GATT_SUBSCRIBE_FLAG_VOLATILE instead). */
-    atomic_set_bit(slot->subscribe_params.flags, BT_GATT_SUBSCRIBE_FLAG_NO_RESUB);
-
-    /* The notify subscription is only used by the peripheral->central direction
-     * (sideband power key). Failing it does not stop the central->peripheral
-     * write path, which is all we need once off_handle is set. */
-    int err = bt_gatt_subscribe(conn, &slot->subscribe_params);
-    if (err && err != -EALREADY) {
-        LOG_WRN("soft-off-plus: subscribe failed (%d)", err);
-    } else {
-        LOG_DBG("soft-off-plus: discovered peripheral off characteristic (handle %u)",
-                slot->off_handle);
-    }
+    LOG_DBG("soft-off-plus: discovered peripheral off characteristic (handle %u)",
+            slot->off_handle);
+    sop_begin_subscription(slot);
     return BT_GATT_ITER_STOP;
 }
 
@@ -256,17 +305,22 @@ static void sop_discover_work_cb(struct k_work *work) {
 
     for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
         struct sop_peripheral_slot *slot = &peripherals[i];
-        if (slot->conn == NULL || slot->off_handle != 0) {
+        if (slot->conn == NULL || slot->subscribed) {
             continue;
         }
         pending = true;
-        if (slot->discovering) {
-            continue; /* a discovery procedure is already in flight */
-        }
         if (bt_conn_get_security(slot->conn) < BT_SECURITY_L2) {
             continue; /* wait until the inter-half link is encrypted */
         }
-        sop_begin_discovery(slot);
+        if (slot->off_handle == 0) {
+            if (!slot->discovering) {
+                sop_begin_discovery(slot);
+            }
+            continue;
+        }
+        if (!slot->subscribed && !slot->subscribing) {
+            sop_begin_subscription(slot);
+        }
     }
 
     if (pending) {
@@ -313,6 +367,8 @@ static void sop_disconnected(struct bt_conn *conn, uint8_t reason) {
     slot->conn = NULL;
     slot->off_handle = 0;
     slot->discovering = false;
+    slot->subscribing = false;
+    slot->subscribed = false;
     slot->subscribe_params.value_handle = 0;
 }
 
