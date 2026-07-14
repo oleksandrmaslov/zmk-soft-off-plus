@@ -5,7 +5,10 @@ menu "ZMK Soft Off Plus"
 config ZMK_SOFT_OFF_PLUS
 	bool "ZMK soft-off-plus"
 	depends on ZMK_PM_SOFT_OFF
-	default y if DT_HAS_ZMK_BEHAVIOR_SOFT_OFF_PLUS_ENABLED || DT_HAS_ZMK_SOFT_OFF_PLUS_WAKE_ENABLED || DT_HAS_ZMK_BEHAVIOR_IF_USB_ENABLED
+	default y if DT_HAS_ZMK_BEHAVIOR_SOFT_OFF_PLUS_ENABLED
+	default y if DT_HAS_ZMK_SOFT_OFF_PLUS_WAKE_ENABLED
+	default y if DT_HAS_ZMK_BEHAVIOR_IF_USB_ENABLED
+	default y if DT_HAS_ZMK_BEHAVIOR_POWER_BUTTON_ENABLED
 	help
 	  Umbrella switch for the soft-off-plus module. Each feature below has its
 	  own option and also auto-enables when its devicetree node is present, so
@@ -74,6 +77,19 @@ config ZMK_SOFT_OFF_PLUS_IF_USB
 	  USB is powered on the half that runs it. Use it on a dedicated
 	  power/soft-off key to gate &bootloader so DFU is only reachable on the
 	  half that is plugged in.
+
+#
+# Feature 4: split-safe dedicated power-button gesture
+#
+config ZMK_SOFT_OFF_PLUS_POWER_BUTTON
+	bool "Split-safe sideband power-button gesture"
+	default y if DT_HAS_ZMK_BEHAVIOR_POWER_BUTTON_ENABLED
+	help
+	  Compile zmk,behavior-power-button, a dedicated sideband gesture that
+	  invokes its first child after a held first press and its second child on
+	  the third quick press. It deliberately has no global key-position event
+	  listener, so normal peripheral matrix events continue directly to the
+	  split transport.
 
 module = ZMK_SOFT_OFF_PLUS
 module-str = "ZMK Soft Off Plus"

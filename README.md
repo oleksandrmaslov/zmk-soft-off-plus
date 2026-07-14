@@ -1,6 +1,6 @@
 # zmk-soft-off-plus
 
-An enhanced soft-off module for ZMK. Three independent, config- and
+An enhanced soft-off module for ZMK. Four independent, config- and
 devicetree-gated features that build on ZMK's built-in soft off:
 
 | Feature | What it does | Kconfig | Devicetree |
@@ -8,6 +8,7 @@ devicetree-gated features that build on ZMK's built-in soft off:
 | **Enhanced soft off** | `&soft_off_plus` behavior; powers off **both** halves even from a **dedicated/sideband power key** — the case ZMK's `&soft_off` can't cover (see below) | `ZMK_SOFT_OFF_PLUS_BEHAVIOR`, `…_SPLIT_SYNC` | `zmk,behavior-soft-off-plus` |
 | **Hold-to-wake** | After soft off, the wake key must be **held** for a set time or the board drops straight back to deep sleep (saves battery on accidental presses) | `ZMK_SOFT_OFF_PLUS_WAKE_DELAY` | `zmk,soft-off-plus-wake` |
 | **USB-gated wrapper** | `zmk,behavior-if-usb` runs a child behavior only while USB is connected — e.g. put `&bootloader` on the power key so DFU only works on the plugged-in half | `ZMK_SOFT_OFF_PLUS_IF_USB` | `zmk,behavior-if-usb` |
+| **Sideband power gesture** | Split-safe hold + triple-tap handling for a dedicated power button, without ZMK tap-dance's central-only global key listener | `ZMK_SOFT_OFF_PLUS_POWER_BUTTON` | `zmk,behavior-power-button` |
 
 Every feature is opt-in: each Kconfig is `default y` **only when its devicetree
 node is present**, so you just add the nodes you want and nothing else turns on.
@@ -81,6 +82,7 @@ manifest:
 | `ZMK_SOFT_OFF_PLUS_WAKE_DELAY` | auto | Boot-time hold-to-wake check. |
 | `ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY` | `50` | POST_KERNEL priority; lower (e.g. `1`) when polling matrix pins. |
 | `ZMK_SOFT_OFF_PLUS_IF_USB` | auto | The `zmk,behavior-if-usb` wrapper. |
+| `ZMK_SOFT_OFF_PLUS_POWER_BUTTON` | auto | Split-safe dedicated-button hold/triple-tap gesture. |
 
 "auto" = `default y` when the matching devicetree node exists.
 
@@ -110,7 +112,7 @@ is plugged into USB**; hold to wake.
         hw_soft_off: sop {
             compatible = "zmk,behavior-soft-off-plus";
             #binding-cells = <0>;
-            hold-time-ms = <2700>;        /* + 300 ms tap-dance = ~3 s physical hold */
+            hold-time-ms = <2700>;        /* + 300 ms gesture decision = ~3 s physical hold */
             trigger-on-hold;              /* blank at hold; enter System OFF on release */
         };
 
@@ -121,12 +123,14 @@ is plugged into USB**; hold to wake.
             bindings = <&bootloader>;
         };
 
-        /* hold -> soft off (both halves) | 2 taps -> nothing | 3 taps -> DFU (USB only) */
-        power_btn_combo: power_btn_combo {
-            compatible = "zmk,behavior-tap-dance";
+        /* hold -> soft off (both halves) | 2 taps -> nothing | 3 taps -> DFU (USB only).
+         * This dedicated gesture has no global position listener, so it is safe
+         * to compile and run on a split peripheral. */
+        power_btn_combo: pwr_cmb {
+            compatible = "zmk,behavior-power-button";
             #binding-cells = <0>;
             tapping-term-ms = <300>;
-            bindings = <&hw_soft_off>, <&none>, <&if_usb_dfu>;
+            bindings = <&hw_soft_off>, <&if_usb_dfu>;
         };
     };
 
@@ -168,12 +172,12 @@ is plugged into USB**; hold to wake.
 keymaps). No `.conf` changes are needed — every feature auto-enables from the
 nodes above (assuming `CONFIG_ZMK_PM_SOFT_OFF=y`).
 
-> The `if-usb` wrapper is only "active" where you bind it — here, on the
-> dedicated power key's tap-dance. It is not compiled at all unless a
-> `zmk,behavior-if-usb` node exists. A sideband tap-dance executes on the
-> physical half that owns the button, so that half checks **its own** USB/VBUS
-> and runs `&bootloader` locally. Nordic split peripherals read VBUS directly
-> because ZMK's USB stack is central-only.
+> The `if-usb` wrapper is only "active" where you bind it — here, as the
+> dedicated power gesture's triple-tap child. It is not compiled at all unless
+> a `zmk,behavior-if-usb` node exists. The gesture executes on the physical half
+> that owns the button, so that half checks **its own** USB/VBUS and runs
+> `&bootloader` locally. Nordic split peripherals read VBUS directly because
+> ZMK's USB stack is central-only.
 
 ## 5. Recipe B — keymap soft off + any-key wake (e.g. corne)
 

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MIT
+%YAML 1.2
+---
+description: |
+  Split-safe gesture for a dedicated sideband power button. Holding the first
+  press beyond tapping-term-ms presses the first child binding. A third quick
+  press invokes the second child binding. Short single and double taps do
+  nothing. Exactly two child bindings are required.
+
+compatible: "zmk,behavior-power-button"
+
+include: zero_param.yaml
+
+properties:
+  tapping-term-ms:
+    type: int
+    default: 300
+    description: Time allowed between taps, and delay before committing a hold.
+
+  bindings:
+    type: phandle-array
+    required: true
+    description: First binding is hold; second binding is triple-tap.
+...
