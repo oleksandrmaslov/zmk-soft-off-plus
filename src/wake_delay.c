@@ -25,6 +25,8 @@
 
 #if IS_ENABLED(CONFIG_ZMK_USB)
 #include <zmk/usb.h>
+#elif IS_ENABLED(CONFIG_SOC_FAMILY_NORDIC_NRF)
+#include <hal/nrf_power.h>
 #endif
 
 LOG_MODULE_DECLARE(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
@@ -76,8 +78,14 @@ static void wake_force_ext_power_off(void) {}
 #endif
 
 static bool wake_usb_bypass(void) {
-#if DT_NODE_HAS_PROP(WAKE_NODE, bypass_on_usb) && IS_ENABLED(CONFIG_ZMK_USB)
+#if !DT_NODE_HAS_PROP(WAKE_NODE, bypass_on_usb)
+    return false;
+#elif IS_ENABLED(CONFIG_ZMK_USB)
     return zmk_usb_is_powered();
+#elif IS_ENABLED(CONFIG_SOC_FAMILY_NORDIC_NRF) && NRF_POWER_HAS_USBREG
+    /* ZMK_USB is central-only on a split. Read VBUS directly so a Nordic
+     * peripheral can still honor bypass-on-usb after a System OFF wake. */
+    return nrf_power_usbregstatus_vbusdet_get(NRF_POWER);
 #else
     return false;
 #endif
