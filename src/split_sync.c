@@ -141,6 +141,16 @@ static struct sop_peripheral_slot *sop_slot_for_conn(struct bt_conn *conn) {
 static struct sop_peripheral_slot *sop_reserve_slot(struct bt_conn *conn) {
     for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
         if (peripherals[i].conn == NULL) {
+            /* Start every connection with fresh GATT procedure state. In
+             * particular, Zephyr uses sub_discover_params.func as its
+             * "auto-CCC discovery in progress" marker, so it must not leak
+             * from a failed procedure on the previous connection. */
+            memset(&peripherals[i].discover_params, 0,
+                   sizeof(peripherals[i].discover_params));
+            memset(&peripherals[i].sub_discover_params, 0,
+                   sizeof(peripherals[i].sub_discover_params));
+            memset(&peripherals[i].subscribe_params, 0,
+                   sizeof(peripherals[i].subscribe_params));
             peripherals[i].conn = conn;
             peripherals[i].off_handle = 0;
             peripherals[i].discovering = false;
@@ -195,9 +205,15 @@ static void sop_subscribe_cb(struct bt_conn *conn, uint8_t err,
 }
 
 static void sop_begin_subscription(struct sop_peripheral_slot *slot) {
+    /* Always start a fresh automatic CCC discovery. If bt_gatt_discover()
+     * fails synchronously (usually -EBUSY), Zephyr leaves disc_params->func
+     * set to its internal discovery callback; without clearing it, every
+     * subsequent bt_gatt_subscribe() returns -EBUSY forever. */
+    memset(&slot->sub_discover_params, 0, sizeof(slot->sub_discover_params));
     slot->subscribe_params.disc_params = &slot->sub_discover_params;
     slot->subscribe_params.end_handle = slot->discover_params.end_handle;
     slot->subscribe_params.value_handle = slot->off_handle;
+    slot->subscribe_params.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
     slot->subscribe_params.notify = sop_notify_cb;
     slot->subscribe_params.subscribe = sop_subscribe_cb;
     slot->subscribe_params.value = BT_GATT_CCC_NOTIFY;
@@ -217,6 +233,10 @@ static void sop_begin_subscription(struct sop_peripheral_slot *slot) {
     } else if (err) {
         slot->subscribing = false;
         slot->subscribed = false;
+        /* Clear Zephyr's auto-discovery in-progress marker after a synchronous
+         * failure so the delayed work can make a genuinely fresh attempt. */
+        memset(&slot->sub_discover_params, 0, sizeof(slot->sub_discover_params));
+        slot->subscribe_params.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
         LOG_WRN("soft-off-plus: subscribe failed (%d); retrying", err);
     }
 }
@@ -247,7 +267,11 @@ static uint8_t sop_chrc_discovery_cb(struct bt_conn *conn, const struct bt_gatt_
 
     LOG_DBG("soft-off-plus: discovered peripheral off characteristic (handle %u)",
             slot->off_handle);
-    sop_begin_subscription(slot);
+    /* Do not start automatic CCC discovery from inside this characteristic
+     * discovery callback: the ATT discovery procedure is still active until
+     * this callback returns, so the nested bt_gatt_discover() gets -EBUSY and
+     * poisons Zephyr's auto-discovery state. The retrying work item will start
+     * the subscription after this procedure has completed. */
     return BT_GATT_ITER_STOP;
 }
 
@@ -370,6 +394,7 @@ static void sop_disconnected(struct bt_conn *conn, uint8_t reason) {
     slot->subscribing = false;
     slot->subscribed = false;
     slot->subscribe_params.value_handle = 0;
+    slot->subscribe_params.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
 }
 
 static struct bt_conn_cb sop_conn_callbacks = {
