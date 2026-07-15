@@ -45,7 +45,6 @@ static void sop_soft_off_work_cb(struct k_work *work) {
         return; /* this half is already powering off (e.g. its own keymap run) */
     }
     LOG_INF("soft-off-plus: peer requested simultaneous off");
-    zmk_soft_off_plus_cut_power_rail();
     int err = zmk_pm_soft_off();
     LOG_ERR("soft-off-plus: peer System OFF returned unexpectedly (%d)", err);
     zmk_soft_off_plus_recover_from_failed_off();
@@ -71,7 +70,6 @@ static void sop_drop_work_cb(struct k_work *work) {
     }
     if (zmk_soft_off_plus_claim_off()) {
         LOG_INF("soft-off-plus: peer DROP; nothing held here, powering off");
-        zmk_soft_off_plus_cut_power_rail();
         int err = zmk_pm_soft_off();
         LOG_ERR("soft-off-plus: peer DROP System OFF returned unexpectedly (%d)", err);
         zmk_soft_off_plus_recover_from_failed_off();
