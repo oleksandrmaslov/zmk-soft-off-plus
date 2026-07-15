@@ -56,6 +56,16 @@ bool zmk_soft_off_plus_claim_off(void);
  * a later gesture or peer command to retry instead of wedging until reset. */
 void zmk_soft_off_plus_release_off_claim(void);
 
+/* Cut the external power rail (display etc.) with a raw GPIO write, called
+ * immediately before entering System OFF. Bypasses the ext_power driver so the
+ * OFF state is not persisted to settings: the pin state is retained through
+ * System OFF and the next boot re-runs the driver, which restores the rail.
+ * Without this a Sharp memory LCD sits powered with VCOM inversion stopped and
+ * drifts to black under DC bias instead of clearing. No-op when no ext-power
+ * node exists. A failed off is undone by recover_from_failed_off(), whose
+ * ext_power_enable() re-opens the rail. */
+void zmk_soft_off_plus_cut_power_rail(void);
+
 /* zmk_pm_soft_off() normally never returns. If device suspension fails, restore
  * the device graph, wake flags, external-power state, and phase-1 display so the
  * keyboard remains usable and EXT_POWER=off is not persisted in settings. */

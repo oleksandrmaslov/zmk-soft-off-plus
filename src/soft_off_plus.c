@@ -19,6 +19,7 @@
 #define SOP_EXT_POWER_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(zmk_ext_power_generic)
 #if DT_NODE_HAS_STATUS(SOP_EXT_POWER_NODE, okay)
 #include <drivers/ext_power.h>
+#include <zephyr/drivers/gpio.h>
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_DISPLAY) && IS_ENABLED(CONFIG_LVGL) &&                                \
@@ -38,6 +39,27 @@ static atomic_t sop_off_claimed;
 bool zmk_soft_off_plus_claim_off(void) { return atomic_cas(&sop_off_claimed, 0, 1); }
 
 void zmk_soft_off_plus_release_off_claim(void) { atomic_clear(&sop_off_claimed); }
+
+#if DT_NODE_HAS_STATUS(SOP_EXT_POWER_NODE, okay) &&                                             \
+    DT_NODE_HAS_PROP(SOP_EXT_POWER_NODE, control_gpios)
+static const struct gpio_dt_spec sop_rail_gpio =
+    GPIO_DT_SPEC_GET_BY_IDX(SOP_EXT_POWER_NODE, control_gpios, 0);
+#endif
+
+void zmk_soft_off_plus_cut_power_rail(void) {
+#if DT_NODE_HAS_STATUS(SOP_EXT_POWER_NODE, okay) &&                                             \
+    DT_NODE_HAS_PROP(SOP_EXT_POWER_NODE, control_gpios)
+    /* Raw GPIO write instead of ext_power_disable(): the driver persists OFF
+     * to settings, which would leave the rail dead on the next boot. GPIO
+     * output state is retained in System OFF, so the rail stays cut until the
+     * next boot reinitializes the ext_power driver. This keeps the memory LCD
+     * from sitting powered with VCOM stopped, which drifts the panel to black
+     * instead of the clean unpowered (white) state. */
+    if (gpio_is_ready_dt(&sop_rail_gpio)) {
+        gpio_pin_set_dt(&sop_rail_gpio, 0);
+    }
+#endif
+}
 
 /* Number of soft-off-plus keys currently held on THIS half via its own behavior.
  * Used to decide whether an incoming cross-half DROP may power this half off

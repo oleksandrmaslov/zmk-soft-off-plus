@@ -25,6 +25,7 @@
 
 #if IS_ENABLED(CONFIG_ZMK_USB)
 #include <zmk/usb.h>
+#include <zmk/soft_off_plus/split_sync.h>
 #elif IS_ENABLED(CONFIG_SOC_FAMILY_NORDIC_NRF)
 #include <hal/nrf_power.h>
 #endif
@@ -125,6 +126,7 @@ static FUNC_NORETURN void wake_return_to_off(void) {
         gpio_pin_interrupt_configure_dt(&wake_gpios[i], GPIO_INT_LEVEL_ACTIVE);
     }
 
+    zmk_soft_off_plus_cut_power_rail();
     sys_poweroff();
     CODE_UNREACHABLE;
 }

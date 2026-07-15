@@ -72,6 +72,7 @@ static void soft_off_plus_trigger(void) {
     k_msleep(CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS);
 #endif
 
+    zmk_soft_off_plus_cut_power_rail();
     int err = zmk_pm_soft_off();
     LOG_ERR("soft-off-plus: System OFF returned unexpectedly (%d)", err);
     zmk_soft_off_plus_recover_from_failed_off();
