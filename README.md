@@ -1,6 +1,6 @@
 # zmk-soft-off-plus
 
-An enhanced soft-off module for ZMK. Four independent, config- and
+An enhanced soft-off module for ZMK. Five independent, config- and
 devicetree-gated features that build on ZMK's built-in soft off:
 
 | Feature | What it does | Kconfig | Devicetree |
@@ -9,9 +9,11 @@ devicetree-gated features that build on ZMK's built-in soft off:
 | **Hold-to-wake** | After soft off, the wake key must be **held** for a set time or the board drops straight back to deep sleep (saves battery on accidental presses) | `ZMK_SOFT_OFF_PLUS_WAKE_DELAY` | `zmk,soft-off-plus-wake` |
 | **USB-gated wrapper** | `zmk,behavior-if-usb` runs a child behavior only while USB is connected — e.g. put `&bootloader` on the power key so DFU only works on the plugged-in half | `ZMK_SOFT_OFF_PLUS_IF_USB` | `zmk,behavior-if-usb` |
 | **Sideband power gesture** | Split-safe hold + triple-tap handling for a dedicated power button, without ZMK tap-dance's central-only global key listener | `ZMK_SOFT_OFF_PLUS_POWER_BUTTON` | `zmk,behavior-power-button` |
+| **Deep-sleep wake guard** | Keeps wake-capable matrix scanners and sideband wrappers armed during inactivity deep sleep | `ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE` | `wakeup-source` on the scanner and sideband wrapper |
 
-Every feature is opt-in: each Kconfig is `default y` **only when its devicetree
-node is present**, so you just add the nodes you want and nothing else turns on.
+Every feature is opt-in: each Kconfig is `default y` only when its matching
+devicetree node or scanner is present. The wake guard only acts on devices that
+also carry `wakeup-source`, so unrelated scanners remain unchanged.
 
 ## What this fixes that ZMK's `&soft_off` doesn't
 
@@ -41,7 +43,10 @@ and the if-usb wrapper have no ZMK equivalent at all.
 > init (`pm_state_force()`), which is unreliable; this one re-arms the wake GPIO
 > and uses `sys_poweroff()`, the same path ZMK uses. Keymap presses ride ZMK's
 > behavior relay; a sideband press signals the other half over a dedicated GATT
-> characteristic.
+> characteristic. On nRF52840, a marker in the second GPREGRET byte distinguishes
+> a deliberate soft off from ZMK's inactivity System OFF: hold-to-wake applies
+> only to deliberate soft off, while a matrix or sideband inactivity wake boots
+> normally.
 
 ## 1. Requirements
 
@@ -83,6 +88,8 @@ manifest:
 | `ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY` | `50` | POST_KERNEL priority; lower (e.g. `1`) when polling matrix pins. |
 | `ZMK_SOFT_OFF_PLUS_IF_USB` | auto | The `zmk,behavior-if-usb` wrapper. |
 | `ZMK_SOFT_OFF_PLUS_POWER_BUTTON` | auto | Split-safe dedicated-button hold/triple-tap gesture. |
+| `ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE` | auto | Preserve wake-enabled matrix and sideband input paths across inactivity deep sleep. |
+| `ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE_INIT_PRIORITY` | `99` | Late APPLICATION priority; must run after ZMK initializes the scanners. |
 
 "auto" = `default y` when the matching devicetree node exists.
 
@@ -279,8 +286,17 @@ BLE.
 > Phase 1 calls `display_blanking_on()` (the same call ZMK's blank-on-idle uses)
 > for a clean panel-level blank on displays that support it (an OLED, or an LS0xx
 > wired with `disp-en-gpios`). A **bare nice!view** has no DISP pin, so the module
-> falls back to an opaque white LVGL overlay and refreshes it on ZMK's display
-> queue. Phase 1 deliberately does not suspend the SPI/display graph or cut
+> falls back to an opaque LVGL overlay and refreshes it on ZMK's display
+> queue. The overlay is LVGL-white; on pipelines that render LVGL colors inverted
+> on the panel (Zephyr's LVGL 9 mono glue does on MONO01 panels — a nice!view on
+> ZMK's Zephyr 4.1 stack shows LVGL white as *black*), set
+> `CONFIG_ZMK_SOFT_OFF_PLUS_BLANK_INVERTED=y` so the visible blank is white
+> there too. To show a picture instead of a plain blank, override the weak hook
+> `zmk_soft_off_plus_blank_overlay_populate()` (declared in
+> `zmk/soft_off_plus/display_overlay.h`) in any compiled source and add e.g. a
+> centered `lv_img` to the overlay — it shows during the hold stage and stays
+> until the panel loses power at System OFF. Phase 1 deliberately does not
+> suspend the SPI/display graph or cut
 > `ext_power`: doing so while the release path and LS0xx VCOM thread are still
 > running can strand the input path, drive an unpowered panel, and persist the
 > external rail's OFF state into settings. Final System OFF performs the real

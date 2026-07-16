@@ -26,6 +26,7 @@
 #include <zephyr/drivers/display.h>
 #include <lvgl.h>
 #include <zmk/display.h>
+#include <zmk/soft_off_plus/display_overlay.h>
 #endif
 
 LOG_MODULE_REGISTER(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
@@ -58,11 +59,19 @@ bool zmk_soft_off_plus_hold_active(void) { return atomic_get(&sop_hold_count) > 
 
 /* A bare nice!view has no DISP pin, so the LS0xx driver's blanking API returns
  * -ENOTSUP. Keep the panel powered (and therefore keep VCOM valid), then cover
- * the active LVGL screen with an opaque white object and force one refresh.
- * Running this on ZMK's display queue avoids racing LVGL's regular updates. */
+ * the active LVGL screen with an opaque object and force one refresh. Running
+ * this on ZMK's display queue avoids racing LVGL's regular updates. */
 #if IS_ENABLED(CONFIG_ZMK_DISPLAY) && IS_ENABLED(CONFIG_LVGL) &&                                \
     DT_HAS_CHOSEN(zephyr_display)
 static lv_obj_t *sop_blank_overlay;
+
+/* LVGL white by default; LVGL black where the pipeline renders colors inverted
+ * on the panel (Zephyr's LVGL 9 mono glue does on MONO01 panels like the
+ * LS0xx), so the visible blank stays white either way. */
+#define SOP_BLANK_COLOR                                                                         \
+    (IS_ENABLED(CONFIG_ZMK_SOFT_OFF_PLUS_BLANK_INVERTED) ? lv_color_black() : lv_color_white())
+
+__weak void zmk_soft_off_plus_blank_overlay_populate(lv_obj_t *overlay) { ARG_UNUSED(overlay); }
 
 static void sop_restore_display_work_cb(struct k_work *work) {
     ARG_UNUSED(work);
@@ -115,9 +124,10 @@ static void sop_blank_display_work_cb(struct k_work *work) {
         lv_obj_remove_style_all(sop_blank_overlay);
         lv_obj_set_pos(sop_blank_overlay, 0, 0);
         lv_obj_set_size(sop_blank_overlay, LV_PCT(100), LV_PCT(100));
-        lv_obj_set_style_bg_color(sop_blank_overlay, lv_color_white(), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(sop_blank_overlay, SOP_BLANK_COLOR, LV_PART_MAIN);
         lv_obj_set_style_bg_opa(sop_blank_overlay, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_clear_flag(sop_blank_overlay, LV_OBJ_FLAG_SCROLLABLE);
+        zmk_soft_off_plus_blank_overlay_populate(sop_blank_overlay);
     } else {
         lv_obj_clear_flag(sop_blank_overlay, LV_OBJ_FLAG_HIDDEN);
     }

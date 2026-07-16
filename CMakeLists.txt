@@ -10,6 +10,7 @@ zephyr_include_directories(${APPLICATION_SOURCE_DIR}/include)
 
 # Shared log module registration (compiled whenever the module is enabled).
 zephyr_library_sources_ifdef(CONFIG_ZMK_SOFT_OFF_PLUS src/soft_off_plus.c)
+zephyr_library_sources_ifdef(CONFIG_ZMK_SOFT_OFF_PLUS src/off_marker.c)
 
 # Enhanced soft-off behavior + cross-half "both halves off" signalling.
 # split_sync.c backs the behavior and degrades to a no-op when split sync is
@@ -27,3 +28,8 @@ zephyr_library_sources_ifdef(CONFIG_ZMK_SOFT_OFF_PLUS_IF_USB src/behavior_if_usb
 # the USB-gated bootloader. Unlike ZMK's keymap tap-dance behavior, this has no
 # global position-event listener and is therefore safe on a split peripheral.
 zephyr_library_sources_ifdef(CONFIG_ZMK_SOFT_OFF_PLUS_POWER_BUTTON src/behavior_power_button.c)
+
+# ZMK's inactivity deep sleep skips wake-enabled devices. Mark the sideband
+# wrapper (not only its inner scanner) and the matrix scanner as enabled wake
+# devices after ZMK has initialized both input paths.
+zephyr_library_sources_ifdef(CONFIG_ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE src/deep_sleep_wake.c)

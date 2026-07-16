@@ -9,6 +9,7 @@ config ZMK_SOFT_OFF_PLUS
 	default y if DT_HAS_ZMK_SOFT_OFF_PLUS_WAKE_ENABLED
 	default y if DT_HAS_ZMK_BEHAVIOR_IF_USB_ENABLED
 	default y if DT_HAS_ZMK_BEHAVIOR_POWER_BUTTON_ENABLED
+	default y if DT_HAS_ZMK_KSCAN_SIDEBAND_BEHAVIORS_ENABLED
 	help
 	  Umbrella switch for the soft-off-plus module. Each feature below has its
 	  own option and also auto-enables when its devicetree node is present, so
@@ -90,6 +91,42 @@ config ZMK_SOFT_OFF_PLUS_POWER_BUTTON
 	  the third quick press. It deliberately has no global key-position event
 	  listener, so normal peripheral matrix events continue directly to the
 	  split transport.
+
+#
+# Deep-sleep wake sources
+#
+config ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE
+	bool "Keep sideband and matrix scanners armed during deep sleep"
+	depends on ZMK_SLEEP && PM_DEVICE
+	default y if DT_HAS_ZMK_KSCAN_SIDEBAND_BEHAVIORS_ENABLED || DT_HAS_ZMK_KSCAN_GPIO_MATRIX_ENABLED
+	help
+	  Explicitly wake-enable status-okay sideband wrappers, their inner scanners,
+	  and GPIO matrix scanners during late application initialization. This keeps
+	  ZMK's inactivity deep-sleep suspend pass from suspending the sideband
+	  wrapper and disarming the GPIO that should wake the keyboard.
+
+config ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE_INIT_PRIORITY
+	int "Deep-sleep wake-source init priority"
+	depends on ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE
+	range 0 99
+	default 99
+	help
+	  APPLICATION initialization priority for arming the scanners. Keep this
+	  later than ZMK's physical-layout and sideband auto-enable initialization.
+
+#
+# Shutdown display blank (used by the hold-stage visual confirmation)
+#
+config ZMK_SOFT_OFF_PLUS_BLANK_INVERTED
+	bool "Draw the shutdown blank with LVGL black instead of white"
+	depends on ZMK_DISPLAY && LVGL
+	help
+	  The hold-stage blank falls back to covering the screen with an opaque
+	  LVGL-white object when the display driver has no blanking support. Some
+	  monochrome pipelines render LVGL colors inverted on the panel: on ZMK's
+	  Zephyr 4.1 / LVGL 9 stack, a MONO01 panel (Sharp LS0xx / nice!view)
+	  shows LVGL white as black. Enable this so the blank is drawn with LVGL
+	  black and such panels clear to white.
 
 module = ZMK_SOFT_OFF_PLUS
 module-str = "ZMK Soft Off Plus"

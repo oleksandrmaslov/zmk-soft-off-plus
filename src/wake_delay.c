@@ -23,6 +23,8 @@
 #include <zephyr/toolchain.h>
 #include <zephyr/logging/log.h>
 
+#include <zmk/soft_off_plus/off_marker.h>
+
 #if IS_ENABLED(CONFIG_ZMK_USB)
 #include <zmk/usb.h>
 #elif IS_ENABLED(CONFIG_SOC_FAMILY_NORDIC_NRF)
@@ -125,11 +127,18 @@ static FUNC_NORETURN void wake_return_to_off(void) {
         gpio_pin_interrupt_configure_dt(&wake_gpios[i], GPIO_INT_LEVEL_ACTIVE);
     }
 
+    /* Keep classifying subsequent wake attempts as manual soft-off wakes until
+     * the configured hold is actually confirmed. */
+    zmk_soft_off_plus_off_marker_set();
     sys_poweroff();
     CODE_UNREACHABLE;
 }
 
 static int wake_delay_init(void) {
+    /* Consume this on every reset so a failed/aborted System OFF cannot poison
+     * a later pin reset or DFU reboot. Rejected wake attempts set it again just
+     * before returning to System OFF. */
+    bool manual_soft_off = zmk_soft_off_plus_off_marker_consume();
     uint32_t cause = 0;
     int rc = hwinfo_get_reset_cause(&cause);
     if (rc != 0) {
@@ -142,6 +151,11 @@ static int wake_delay_init(void) {
 
     if (!(cause & RESET_LOW_POWER_WAKE)) {
         LOG_DBG("soft-off-plus: not a soft-off wake (cause 0x%08x); continuing", cause);
+        return 0;
+    }
+
+    if (!manual_soft_off) {
+        LOG_DBG("soft-off-plus: inactivity deep-sleep wake; continuing boot");
         return 0;
     }
 

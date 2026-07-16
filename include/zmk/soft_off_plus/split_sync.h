@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 /* Opcodes exchanged between halves.
- *  OFF  - power off now (claim + zmk_pm_soft_off).
+ *  OFF  - power off now (claim + marked ZMK soft off).
  *  DROP - request phase-1 visual confirmation WITHOUT powering off the half
  *         whose own wake key is held. Used by trigger-on-hold so that half can
  *         still observe release; a passive peer enters System OFF immediately. */
@@ -52,11 +52,11 @@ bool zmk_soft_off_plus_hold_active(void);
  * twice. */
 bool zmk_soft_off_plus_claim_off(void);
 
-/* Release a claimed attempt if zmk_pm_soft_off() unexpectedly returns, allowing
+/* Release a claimed attempt if the marked soft-off call unexpectedly returns, allowing
  * a later gesture or peer command to retry instead of wedging until reset. */
 void zmk_soft_off_plus_release_off_claim(void);
 
-/* zmk_pm_soft_off() normally never returns. If device suspension fails, restore
+/* ZMK soft off normally never returns. If device suspension fails, restore
  * the device graph, wake flags, external-power state, and phase-1 display so the
  * keyboard remains usable and EXT_POWER=off is not persisted in settings. */
 void zmk_soft_off_plus_recover_from_failed_off(void);

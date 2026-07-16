@@ -25,7 +25,7 @@
 #include <zephyr/sys/atomic.h>
 
 #include <zmk/behavior.h>
-#include <zmk/pm.h>
+#include <zmk/soft_off_plus/off_marker.h>
 #include <zmk/soft_off_plus/split_sync.h>
 
 LOG_MODULE_DECLARE(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
@@ -72,7 +72,7 @@ static void soft_off_plus_trigger(void) {
     k_msleep(CONFIG_ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS);
 #endif
 
-    int err = zmk_pm_soft_off();
+    int err = zmk_soft_off_plus_pm_soft_off();
     LOG_ERR("soft-off-plus: System OFF returned unexpectedly (%d)", err);
     zmk_soft_off_plus_recover_from_failed_off();
     zmk_soft_off_plus_release_off_claim();
