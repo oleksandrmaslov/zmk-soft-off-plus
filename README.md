@@ -90,6 +90,7 @@ manifest:
 | `ZMK_SOFT_OFF_PLUS_POWER_BUTTON` | auto | Split-safe dedicated-button hold/triple-tap gesture. |
 | `ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE` | auto | Preserve wake-enabled matrix and sideband input paths across inactivity deep sleep. |
 | `ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE_INIT_PRIORITY` | `99` | Late APPLICATION priority; must run after ZMK initializes the scanners. |
+| `ZMK_SOFT_OFF_PLUS_BLANK_INVERTED` | `y` | LVGL-black shutdown overlay for the inverted nice!view pipeline; no board override needed. |
 
 "auto" = `default y` when the matching devicetree node exists.
 
@@ -287,11 +288,11 @@ BLE.
 > for a clean panel-level blank on displays that support it (an OLED, or an LS0xx
 > wired with `disp-en-gpios`). A **bare nice!view** has no DISP pin, so the module
 > falls back to an opaque LVGL overlay and refreshes it on ZMK's display
-> queue. The overlay is LVGL-white; on pipelines that render LVGL colors inverted
-> on the panel (Zephyr's LVGL 9 mono glue does on MONO01 panels — a nice!view on
-> ZMK's Zephyr 4.1 stack shows LVGL white as *black*), set
-> `CONFIG_ZMK_SOFT_OFF_PLUS_BLANK_INVERTED=y` so the visible blank is white
-> there too. To show a picture instead of a plain blank, override the weak hook
+> queue. The overlay defaults to LVGL-black for the inverted MONO01 pipeline
+> used by nice!view on ZMK's Zephyr 4.1 / LVGL 9 stack, so the visible blank is
+> white without a board-specific setting. Non-inverted pipelines can use an
+> LVGL-white overlay with `CONFIG_ZMK_SOFT_OFF_PLUS_BLANK_INVERTED=n`.
+> To show a picture instead of a plain blank, override the weak hook
 > `zmk_soft_off_plus_blank_overlay_populate()` (declared in
 > `zmk/soft_off_plus/display_overlay.h`) in any compiled source and add e.g. a
 > centered `lv_img` to the overlay — it shows during the hold stage and stays

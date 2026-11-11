@@ -120,13 +120,14 @@ config ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE_INIT_PRIORITY
 config ZMK_SOFT_OFF_PLUS_BLANK_INVERTED
 	bool "Draw the shutdown blank with LVGL black instead of white"
 	depends on ZMK_DISPLAY && LVGL
+	default y
 	help
 	  The hold-stage blank falls back to covering the screen with an opaque
-	  LVGL-white object when the display driver has no blanking support. Some
-	  monochrome pipelines render LVGL colors inverted on the panel: on ZMK's
-	  Zephyr 4.1 / LVGL 9 stack, a MONO01 panel (Sharp LS0xx / nice!view)
-	  shows LVGL white as black. Enable this so the blank is drawn with LVGL
-	  black and such panels clear to white.
+	  LVGL-black object when the display driver has no blanking support. This
+	  defaults to the inverted MONO01 pipeline used by Sharp LS0xx / nice!view
+	  on ZMK's Zephyr 4.1 / LVGL 9 stack, so the panel clears to white without
+	  a board-specific override. Disable this for a non-inverted pipeline
+	  that needs an LVGL-white overlay.
 
 module = ZMK_SOFT_OFF_PLUS
 module-str = "ZMK Soft Off Plus"

@@ -65,9 +65,8 @@ bool zmk_soft_off_plus_hold_active(void) { return atomic_get(&sop_hold_count) > 
     DT_HAS_CHOSEN(zephyr_display)
 static lv_obj_t *sop_blank_overlay;
 
-/* LVGL white by default; LVGL black where the pipeline renders colors inverted
- * on the panel (Zephyr's LVGL 9 mono glue does on MONO01 panels like the
- * LS0xx), so the visible blank stays white either way. */
+/* Default to LVGL black for the inverted MONO01 pipeline used by nice!view.
+ * Non-inverted pipelines can select LVGL white by disabling BLANK_INVERTED. */
 #define SOP_BLANK_COLOR                                                                         \
     (IS_ENABLED(CONFIG_ZMK_SOFT_OFF_PLUS_BLANK_INVERTED) ? lv_color_black() : lv_color_white())
 
