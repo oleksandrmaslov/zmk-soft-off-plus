@@ -85,7 +85,7 @@ manifest:
 | `ZMK_SOFT_OFF_PLUS_SPLIT_SYNC` | `y` on split | Power both halves off together (needs `ZMK_SPLIT` + `BT`). |
 | `ZMK_SOFT_OFF_PLUS_SPLIT_SYNC_FLUSH_MS` | `60` | Delay so the BLE off-signal flushes before powering off. |
 | `ZMK_SOFT_OFF_PLUS_WAKE_DELAY` | auto | Boot-time hold-to-wake check. |
-| `ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY` | `50` | POST_KERNEL priority; lower (e.g. `1`) when polling matrix pins. |
+| `ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY` | `1` on Nordic, otherwise `50` | POST_KERNEL priority; hold check runs before SPI/USB initialization on Nordic. Wake GPIO controllers must already be ready. |
 | `ZMK_SOFT_OFF_PLUS_IF_USB` | auto | The `zmk,behavior-if-usb` wrapper. |
 | `ZMK_SOFT_OFF_PLUS_POWER_BUTTON` | auto | Split-safe dedicated-button hold/triple-tap gesture. |
 | `ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE` | auto | Preserve wake-enabled matrix and sideband input paths across inactivity deep sleep. |
@@ -93,6 +93,14 @@ manifest:
 | `ZMK_SOFT_OFF_PLUS_BLANK_INVERTED` | `y` | LVGL-black shutdown overlay for the inverted nice!view pipeline; no board override needed. |
 
 "auto" = `default y` when the matching devicetree node exists.
+
+On Nordic, the wake hold is checked before SPI/USB device initialization. The
+external rail stays off during the hold and USB debounce, then the normal device
+initialization restores it after wake is confirmed. USB bypass reads VBUS directly
+because the USB stack is not initialized at this stage.
+
+Run `python3 tests/check_wake_path.py` to check the real wake code with simulated
+GPIO, USB state, reset causes and retention registers. A C compiler is required.
 
 ## 4. Recipe A — dedicated power/soft-off switch (e.g. wafer)
 

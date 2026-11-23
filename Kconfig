@@ -62,10 +62,12 @@ config ZMK_SOFT_OFF_PLUS_WAKE_DELAY
 config ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY
 	int "Wake-delay boot check init priority (POST_KERNEL)"
 	depends on ZMK_SOFT_OFF_PLUS_WAKE_DELAY
+	default 1 if SOC_FAMILY_NORDIC_NRF
 	default 50
 	help
-	  POST_KERNEL priority of the boot-time hold check. It must run before the
-	  kscan that owns the wake pins; for a matrix wake key set this low (e.g. 1).
+	  POST_KERNEL priority of the boot-time hold check. On Nordic, run before
+	  SPI/USB initialization so display I/O stays inactive during an unconfirmed
+	  wake. Wake and external-power GPIO controllers must already be ready.
 
 #
 # Feature 3: USB-conditional wrapper (e.g. bootloader on the power key)
