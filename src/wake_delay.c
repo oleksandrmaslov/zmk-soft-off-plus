@@ -25,11 +25,10 @@
 
 #include <zmk/soft_off_plus/off_marker.h>
 
-#if IS_ENABLED(CONFIG_SOC_FAMILY_NORDIC_NRF)
-#include <hal/nrf_power.h>
-#endif
 #if IS_ENABLED(CONFIG_ZMK_USB)
 #include <zmk/usb.h>
+#elif IS_ENABLED(CONFIG_SOC_FAMILY_NORDIC_NRF)
+#include <hal/nrf_power.h>
 #endif
 
 LOG_MODULE_DECLARE(zmk_soft_off_plus, CONFIG_ZMK_SOFT_OFF_PLUS_LOG_LEVEL);
@@ -83,11 +82,12 @@ static void wake_force_ext_power_off(void) {}
 static bool wake_usb_bypass(void) {
 #if !DT_NODE_HAS_PROP(WAKE_NODE, bypass_on_usb)
     return false;
-#elif IS_ENABLED(CONFIG_SOC_FAMILY_NORDIC_NRF) && NRF_POWER_HAS_USBREG
-    /* The early wake guard runs before ZMK's USB status is initialized. */
-    return nrf_power_usbregstatus_vbusdet_get(NRF_POWER);
 #elif IS_ENABLED(CONFIG_ZMK_USB)
     return zmk_usb_is_powered();
+#elif IS_ENABLED(CONFIG_SOC_FAMILY_NORDIC_NRF) && NRF_POWER_HAS_USBREG
+    /* ZMK_USB is central-only on a split. Read VBUS directly so a Nordic
+     * peripheral can still honor bypass-on-usb after a System OFF wake. */
+    return nrf_power_usbregstatus_vbusdet_get(NRF_POWER);
 #else
     return false;
 #endif
@@ -159,9 +159,6 @@ static int wake_delay_init(void) {
         return 0;
     }
 
-    /* Keep the panel unpowered throughout both the hold and USB debounce. */
-    wake_force_ext_power_off();
-
     for (size_t i = 0; i < NUM_WAKE_GPIOS; i++) {
         if (!gpio_is_ready_dt(&wake_gpios[i])) {
             LOG_ERR("soft-off-plus: wake GPIO not ready; continuing boot");
@@ -175,6 +172,7 @@ static int wake_delay_init(void) {
 
     if (!wake_any_active()) {
         LOG_INF("soft-off-plus: wake key not held at boot");
+        wake_force_ext_power_off();
         wake_return_to_off();
     }
 
@@ -186,11 +184,17 @@ static int wake_delay_init(void) {
         k_msleep(20); /* reject a release edge or switch bounce around reset */
         if (!wake_any_active()) {
             LOG_INF("soft-off-plus: USB wake key released during debounce");
+            wake_force_ext_power_off();
             wake_return_to_off();
         }
         LOG_INF("soft-off-plus: USB present and wake key active; bypassing wake hold");
         return 0;
     }
+
+    /* Committed to a hold check on battery: keep external peripherals (e.g. the
+     * display) dark until the wake is confirmed, so a too-short press cannot
+     * power them. */
+    wake_force_ext_power_off();
 
     if (WAKE_HOLD_MS == 0) {
         return 0;

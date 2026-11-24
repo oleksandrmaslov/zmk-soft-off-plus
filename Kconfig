@@ -62,12 +62,10 @@ config ZMK_SOFT_OFF_PLUS_WAKE_DELAY
 config ZMK_SOFT_OFF_PLUS_WAKE_DELAY_INIT_PRIORITY
 	int "Wake-delay boot check init priority (POST_KERNEL)"
 	depends on ZMK_SOFT_OFF_PLUS_WAKE_DELAY
-	default 1 if SOC_FAMILY_NORDIC_NRF
 	default 50
 	help
-	  POST_KERNEL priority of the boot-time hold check. On Nordic, run before
-	  SPI/USB initialization so display I/O stays inactive during an unconfirmed
-	  wake. Wake and external-power GPIO controllers must already be ready.
+	  POST_KERNEL priority of the boot-time hold check. It must run before the
+	  kscan that owns the wake pins; for a matrix wake key set this low (e.g. 1).
 
 #
 # Feature 3: USB-conditional wrapper (e.g. bootloader on the power key)
@@ -122,14 +120,13 @@ config ZMK_SOFT_OFF_PLUS_DEEP_SLEEP_WAKE_INIT_PRIORITY
 config ZMK_SOFT_OFF_PLUS_BLANK_INVERTED
 	bool "Draw the shutdown blank with LVGL black instead of white"
 	depends on ZMK_DISPLAY && LVGL
-	default y
 	help
 	  The hold-stage blank falls back to covering the screen with an opaque
-	  LVGL-black object when the display driver has no blanking support. This
-	  defaults to the inverted MONO01 pipeline used by Sharp LS0xx / nice!view
-	  on ZMK's Zephyr 4.1 / LVGL 9 stack, so the panel clears to white without
-	  a board-specific override. Disable this for a non-inverted pipeline
-	  that needs an LVGL-white overlay.
+	  LVGL-white object when the display driver has no blanking support. Some
+	  monochrome pipelines render LVGL colors inverted on the panel: on ZMK's
+	  Zephyr 4.1 / LVGL 9 stack, a MONO01 panel (Sharp LS0xx / nice!view)
+	  shows LVGL white as black. Enable this so the blank is drawn with LVGL
+	  black and such panels clear to white.
 
 module = ZMK_SOFT_OFF_PLUS
 module-str = "ZMK Soft Off Plus"
